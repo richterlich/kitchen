@@ -190,24 +190,147 @@ function scaledCanvas(src, w, h, maxW) {
   ctx.drawImage(src, 0, 0, c.width, c.height);
   return c;
 }
+function loadImg(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Bild konnte nicht gelesen werden')); i.src = src; });
+}
 
-async function readPdf(file) {
+/* ---------- Texterkennung (OCR, läuft lokal auf dem Handy) ---------- */
+const OCR = {
+  worker: null,
+  onProgress: null,
+  async get() {
+    if (this.worker) return this.worker;
+    if (!window.Tesseract) throw new Error('Texterkennung nicht geladen');
+    const abs = (p) => new URL(p, location.href).href;
+    this.worker = await Tesseract.createWorker('deu', 1, {
+      workerPath: abs('lib/tesseract/worker.min.js'),
+      corePath: abs('lib/tesseract/core'),
+      langPath: abs('lib/tesseract/lang'),
+      workerBlobURL: false,
+      logger: (m) => this.onProgress && this.onProgress(m),
+    });
+    await this.worker.setParameters({ preserve_interword_spaces: '1' });
+    return this.worker;
+  },
+  // src: Bild, Canvas oder dataURL
+  async recognize(src, onProgress) {
+    this.onProgress = onProgress;
+    const w = await this.get();
+    const canvas = prepareForOcr(src);
+    const { data } = await w.recognize(canvas);
+    try {
+      const t = layoutText(data, canvas.width);
+      if (t.trim()) return t;
+    } catch (e) { console.warn('Layout-Auswertung fehlgeschlagen', e); }
+    return data.text || '';
+  },
+};
+
+// Erkannten Text in Lesereihenfolge bringen – auch bei Karten mit zwei Spalten
+// (z. B. Zutaten links, Zubereitung rechts).
+function layoutText(data, W) {
+  const segs = [];
+  for (const line of data.lines || []) {
+    const ws = (line.words || []).filter((w) => {
+      const t = (w.text || '').trim();
+      if (!t) return false;
+      const alnum = t.replace(/[^A-Za-zÄÖÜäöüß0-9½¼¾]/g, '').length;
+      if (!alnum) return false; // reine Satzzeichen/Striche
+      return !(w.confidence < 55 && alnum < 3); // kurze, unsichere Krümel (Ränder, Schatten)
+    });
+    if (!ws.length) continue;
+    const h = Math.max(8, line.bbox.y1 - line.bbox.y0);
+    let cur = null;
+    for (const w of ws) {
+      // große Lücke in der Zeile = hier beginnt die nächste Spalte
+      if (cur && w.bbox.x0 - cur.x1 > h * 2.2) { segs.push(cur); cur = null; }
+      if (!cur) cur = { x0: w.bbox.x0, x1: w.bbox.x1, y: line.bbox.y0, text: w.text };
+      else { cur.x1 = w.bbox.x1; cur.text += ' ' + w.text; }
+    }
+    segs.push(cur);
+  }
+  const byY = (a, b) => a.y - b.y || a.x0 - b.x0;
+  // Spaltengrenze suchen: eine x-Position, die (fast) keine Zeile überquert
+  let best = null;
+  for (const c of segs) {
+    const g = c.x0 - 1;
+    if (g < W * 0.2 || g > W * 0.8) continue;
+    const left = segs.filter((t) => t.x1 <= g).length;
+    const right = segs.filter((t) => t.x0 >= g).length;
+    const span = segs.length - left - right;
+    if (left < 3 || right < 3) continue;
+    const min = Math.min(left, right);
+    if (!best || span < best.span || (span === best.span && min > best.min)) best = { g, span, min };
+  }
+  let ordered;
+  if (best && best.span <= segs.length * 0.2) {
+    const L = segs.filter((t) => t.x1 <= best.g).sort(byY);
+    const R = segs.filter((t) => t.x0 >= best.g).sort(byY);
+    const S = segs.filter((t) => t.x1 > best.g && t.x0 < best.g).sort(byY);
+    const top = Math.min(L[0].y, R[0].y);
+    ordered = [...S.filter((t) => t.y <= top), ...L, ...R, ...S.filter((t) => t.y > top)];
+  } else {
+    ordered = segs.sort(byY);
+  }
+  return ordered.map((t) => t.text.replace(/\s+/g, ' ').trim()).join('\n');
+}
+
+// Bild für die Texterkennung aufbereiten: passende Größe, Graustufen, Kontrast
+function prepareForOcr(src) {
+  const w0 = src.naturalWidth || src.width, h0 = src.naturalHeight || src.height;
+  const s = Math.min(2400 / w0, 1.8);
+  const c = document.createElement('canvas');
+  c.width = Math.round(w0 * s); c.height = Math.round(h0 * s);
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  const img = ctx.getImageData(0, 0, c.width, c.height);
+  const d = img.data;
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) {
+    const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+    d[i] = g; hist[g]++;
+  }
+  // Kontrast strecken (1 % dunkelste / hellste Pixel abschneiden)
+  const total = d.length / 4;
+  let lo = 0, hi = 255, acc = 0;
+  for (; lo < 255 && (acc += hist[lo]) < total * 0.01; lo++);
+  acc = 0;
+  for (; hi > 0 && (acc += hist[hi]) < total * 0.01; hi--);
+  const range = Math.max(1, hi - lo);
+  for (let i = 0; i < d.length; i += 4) {
+    const v = Math.max(0, Math.min(255, ((d[i] - lo) * 255) / range));
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+function ocrProgressText(prefix, m) {
+  if (m.status === 'recognizing text') return `${prefix}Text wird erkannt … ${Math.round(m.progress * 100)} %`;
+  return `${prefix}Texterkennung wird vorbereitet …`;
+}
+
+async function readPdf(file, progress = () => {}) {
   if (!window.pdfjsLib) throw new Error('PDF-Bibliothek nicht geladen');
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const pages = [];
-  const lines = [];
+  const texts = [];
+  let ocrUsed = false;
   for (let p = 1; p <= pdf.numPages; p++) {
+    const pre = pdf.numPages > 1 ? `Seite ${p}/${pdf.numPages}: ` : '';
+    progress(pre + 'Lese PDF …');
     const page = await pdf.getPage(p);
     const base = page.getViewport({ scale: 1 });
-    const vp = page.getViewport({ scale: Math.min(3, 1300 / base.width) });
+    const vp = page.getViewport({ scale: Math.min(4, 2200 / base.width) });
     const c = document.createElement('canvas');
     c.width = Math.round(vp.width); c.height = Math.round(vp.height);
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     await page.render({ canvasContext: ctx, viewport: vp }).promise;
-    pages.push(canvasToJpeg(c));
-    // Text zeilenweise extrahieren (falls die PDF eine Textebene hat)
+    pages.push(canvasToJpeg(scaledCanvas(c, c.width, c.height, 1300)));
+    // 1. Versuch: eingebetteter Text der PDF
     const tc = await page.getTextContent();
     const rows = [];
     for (const it of tc.items) {
@@ -218,21 +341,42 @@ async function readPdf(file) {
       row.parts.push({ x, s: it.str });
     }
     rows.sort((a, b) => b.y - a.y);
-    for (const r of rows) lines.push(r.parts.sort((a, b) => a.x - b.x).map((p) => p.s).join(' ').replace(/\s+/g, ' ').trim());
+    let pageText = rows.map((r) => r.parts.sort((a, b) => a.x - b.x).map((q) => q.s).join(' ').replace(/\s+/g, ' ').trim()).join('\n');
+    // 2. Kein Text (eingescannte Karte) → Texterkennung auf dem Bild
+    if (pageText.replace(/\s/g, '').length < 20) {
+      pageText = await OCR.recognize(c, (m) => progress(ocrProgressText(pre, m)));
+      ocrUsed = true;
+    }
+    texts.push(pageText);
+    c.width = c.height = 0; // Speicher freigeben (wichtig auf dem iPhone)
   }
-  return { pages, text: lines.filter(Boolean).join('\n') };
+  return { pages, text: texts.join('\n'), ocrUsed };
 }
 
-async function readImage(file) {
+async function readImage(file, progress = () => {}) {
   const url = URL.createObjectURL(file);
   try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-    return { pages: [canvasToJpeg(scaledCanvas(img, img.naturalWidth, img.naturalHeight, 1300))], text: '' };
+    progress('Lese Foto …');
+    const img = await loadImg(url);
+    const pages = [canvasToJpeg(scaledCanvas(img, img.naturalWidth, img.naturalHeight, 1300))];
+    const text = await OCR.recognize(img, (m) => progress(ocrProgressText('', m)));
+    return { pages, text, ocrUsed: true };
   } finally { URL.revokeObjectURL(url); }
 }
 
+// Texterkennung für bereits gespeicherte Seiten eines Rezepts
+async function ocrPages(pages, progress = () => {}) {
+  const texts = [];
+  for (let i = 0; i < pages.length; i++) {
+    const pre = pages.length > 1 ? `Seite ${i + 1}/${pages.length}: ` : '';
+    const img = await loadImg(pages[i]);
+    texts.push(await OCR.recognize(img, (m) => progress(ocrProgressText(pre, m))));
+  }
+  return texts.join('\n');
+}
+
 async function makeThumb(dataUrl) {
-  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = dataUrl; });
+  const img = await loadImg(dataUrl);
   const size = 160;
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -243,63 +387,120 @@ async function makeThumb(dataUrl) {
   return canvasToJpeg(c, 0.7);
 }
 
-// Grobe Erkennung von Titel / Portionen / Zutaten / Zubereitung aus dem PDF-Text
-function guessFromText(text, fallbackTitle) {
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-  const out = { title: fallbackTitle, servings: 0, ingredients: '', steps: '' };
-  if (!lines.length) return out;
-  const sv = text.match(/(?:für\s*)?(\d+)\s*(?:Personen|Portionen|Pers\.|Port\.)/i);
-  if (sv) out.servings = +sv[1];
-  const iZ = lines.findIndex((l) => /^zutaten\b/i.test(l));
-  const iA = lines.findIndex((l, i) => i > iZ && /^(zubereitung|anleitung|so geht'?s|schritte|arbeitsschritte|und so wird'?s gemacht)\b/i.test(l));
-  const head = lines.slice(0, iZ >= 0 ? iZ : 1);
-  const t = head.find((l) => l.length > 2 && !/personen|portionen|minuten|min\.|kcal/i.test(l));
-  if (t) out.title = t;
-  if (iZ >= 0) {
-    const firstIng = lines[iZ].replace(/^zutaten\b[^:]*:?\s*/i, '');
-    const ing = [firstIng, ...lines.slice(iZ + 1, iA > 0 ? iA : undefined)].filter(Boolean)
-      .filter((l) => !/^(für\s*)?\d+\s*(personen|portionen)/i.test(l));
-    out.ingredients = ing.join('\n');
-    if (iA > 0) {
-      const firstStep = lines[iA].replace(/^\S+[^:]*:?\s*/, '');
-      out.steps = [firstStep, ...lines.slice(iA + 1)].filter(Boolean).join('\n');
-    }
-  } else {
-    out.steps = lines.slice(1).join('\n');
+/* ---------- Text der Karte in Titel / Zutaten / Zubereitung aufteilen ---------- */
+const ING_HEAD = /^(zutat\w*|einkaufsliste|du brauchst|das brauchst du|was du brauchst)\b/i;
+const STEP_HEAD = /^(zubereit\w*|anleit\w*|so geht'?s|so wird'?s gemacht|und so wird'?s gemacht|schritte|arbeitsschritte|zubereitungsschritte|kochanleitung)\b/i;
+const META = /(personen|portionen|minuten|min\.|std\.|kcal|kalorien|schwierigkeit|zubereitungszeit|kochzeit|gesamtzeit|arbeitszeit|backzeit)/i;
+const GENERIC_NAME = /^(image|img|scan|dsc|pxl|photo|foto|bild|screenshot|dokument|document|file|kopie)[\s_-]*\d*/i;
+
+function cleanLine(l) {
+  return l
+    .replace(/[|¦_~]+/g, ' ')
+    .replace(/^[\s•·●▪■□◦○*»>\-–—]+/, '') // Aufzählungszeichen
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+const words = (l) => l.split(/\s+/).filter(Boolean).length;
+const isStepNumber = (l) => /^\d{1,2}\s*[.)]\s+\D/.test(l) && !/^\d+[.,]\d/.test(l);
+// Typischer Lesefehler: "1 l Milch" wird als "11 Milch" erkannt
+const LIQUID = /(brühe|milch|wasser|sahne|wein|saft|fond|bier|essig|öl|sud)/i;
+function fixOcrIngredient(l) {
+  return l.replace(/^(\d+(?:[.,]\d+)?)[1lI|]\s+(?=\S+)/, (m, n, off, str) => (LIQUID.test(str.slice(m.length).split(/\s+/)[0]) ? n + ' l ' : m));
+}
+function looksLikeIngredient(l) {
+  if (isStepNumber(l)) return false;
+  const w = words(l);
+  if (/[.!?]$/.test(l) && w >= 4) return false;
+  if (w > 8) return false;
+  if (QTY_RE.test(l) && /^\s*[\d½¼¾⅓⅔⅛]/.test(l)) return true;
+  const first = l.split(/\s+/)[0].replace(/\.$/, '').toLowerCase();
+  if (UNIT_MAP[first] || /^(etwas|n\.\s?b\.|nach belieben|evtl\.|optional)/i.test(l)) return true;
+  return w <= 3 && !/[.!?:]$/.test(l);
+}
+function looksLikeSentence(l) {
+  const w = words(l);
+  return isStepNumber(l) || w >= 8 || (w >= 4 && /[.!?]$/.test(l)) || /[a-zäöüß]{4,}[.!?]$/.test(l) && !/^\s*[\d½¼¾]/.test(l);
+}
+// Zeilen der Zubereitung zu ganzen Schritten zusammenfügen
+function mergeSteps(lines) {
+  const out = [];
+  for (const raw of lines) {
+    const startsNew = isStepNumber(raw);
+    const text = (startsNew ? raw.replace(/^\d{1,2}\s*[.)]\s*/, '') : raw).trim();
+    if (!text) continue;
+    const prev = out[out.length - 1];
+    if (!prev || startsNew || /[.!?:]$/.test(prev)) out.push(text);
+    else if (/-$/.test(prev) && /^[a-zäöüß]/.test(text)) out[out.length - 1] = prev.slice(0, -1) + text;
+    else out[out.length - 1] = prev + ' ' + text;
   }
   return out;
+}
+
+function guessFromText(text, fallbackTitle) {
+  const out = { title: '', servings: 0, ingredients: '', steps: '' };
+  const lines = text.split('\n').map(cleanLine).filter((l) => {
+    if (!/[A-Za-zÄÖÜäöüß]{3,}|\d/.test(l)) return false;
+    const chars = l.replace(/\s/g, '');
+    return chars.replace(/[^A-Za-zÄÖÜäöüß0-9½¼¾,.()-]/g, '').length >= chars.length * 0.7;
+  });
+  const sv = text.match(/(?:für\s*)?(\d+)\s*(?:Personen|Portionen|Pers\.|Port\.)/i);
+  if (sv && +sv[1] > 0 && +sv[1] < 30) out.servings = +sv[1];
+
+  // Titel: erste aussagekräftige Zeile vor den Zutaten
+  let titleIdx = lines.findIndex((l) => !ING_HEAD.test(l) && !STEP_HEAD.test(l) && !META.test(l) && /[A-Za-zÄÖÜäöüß]{3,}/.test(l) && !looksLikeSentence(l) && !/^\s*[\d½¼¾]/.test(l));
+  const firstHead = lines.findIndex((l) => ING_HEAD.test(l) || STEP_HEAD.test(l));
+  if (firstHead >= 0 && titleIdx > firstHead) titleIdx = -1;
+  if (titleIdx >= 0) out.title = lines[titleIdx].replace(/[.:]+$/, '');
+
+  const ing = [], steps = [];
+  let section = null;
+  lines.forEach((l, i) => {
+    if (i === titleIdx) return;
+    if (ING_HEAD.test(l)) { section = 'ing'; l = l.replace(ING_HEAD, '').replace(/^[^:]*:\s*/, '').trim(); if (!l) return; }
+    else if (STEP_HEAD.test(l)) { section = 'step'; l = l.replace(STEP_HEAD, '').replace(/^\s*:\s*/, '').trim(); if (!l) return; }
+    if (META.test(l) && words(l) <= 6 && !looksLikeSentence(l)) return;
+    if (section === 'step') steps.push(l);
+    else if (section === 'ing') (looksLikeSentence(l) ? steps : ing).push(l);
+    else (looksLikeIngredient(l) ? ing : steps).push(l);
+  });
+  out.ingredients = ing.map(fixOcrIngredient).join('\n');
+  out.steps = mergeSteps(steps).join('\n');
+  if (!out.title) out.title = GENERIC_NAME.test(fallbackTitle || '') ? '' : fallbackTitle || '';
+  return out;
+}
+
+function applyGuess(rec, text, fallbackTitle) {
+  const g = guessFromText(text, fallbackTitle);
+  rec.title = g.title || rec.title || 'Neues Rezept';
+  if (g.servings) rec.servings = g.servings;
+  rec.ingredients = parseIngredients(g.ingredients);
+  rec.steps = g.steps;
+  rec.sourceText = text;
+  rec.needsReview = true;
 }
 
 async function importFiles(files) {
   const b = busy('Importiere …');
   const created = [];
-  try {
-    let n = 0;
-    for (const f of files) {
-      n++;
-      b.set(`Importiere ${n}/${files.length}: ${f.name}`);
+  let n = 0;
+  for (const f of files) {
+    n++;
+    const pre = files.length > 1 ? `Karte ${n}/${files.length} – ` : '';
+    try {
       const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
-      const { pages, text } = isPdf ? await readPdf(f) : await readImage(f);
-      const g = guessFromText(text, f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
-      const rec = {
-        id: uid(),
-        title: g.title,
-        servings: g.servings || 2,
-        ingredients: parseIngredients(g.ingredients),
-        steps: g.steps,
-        pages,
-        thumb: pages[0] ? await makeThumb(pages[0]) : '',
-        sourceText: text,
-        needsReview: true,
-        created: Date.now(),
-      };
+      const progress = (m) => b.set(pre + m);
+      const { pages, text } = isPdf ? await readPdf(f, progress) : await readImage(f, progress);
+      const rec = { id: uid(), title: '', servings: 2, ingredients: [], steps: '', pages, created: Date.now() };
+      applyGuess(rec, text, f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
+      rec.thumb = pages[0] ? await makeThumb(pages[0]) : '';
       await DB.put(rec);
       created.push(rec);
+    } catch (e) {
+      console.error(e);
+      toast(`Fehler bei ${f.name}: ${e.message}`, 4000);
     }
-  } catch (e) {
-    console.error(e);
-    toast('Fehler beim Import: ' + e.message, 4000);
-  } finally { b.done(); }
+  }
+  b.done();
   return created;
 }
 
@@ -402,12 +603,14 @@ async function viewRecipe(view, id) {
   if (!r) return go('#recipes');
   setHeader(r.title, { back: true, action: { label: '✎', aria: 'Bearbeiten', onClick: () => go('#edit/' + id) } });
   let portions = getPlan()[id] || r.servings || 2;
-  const stepsArr = (r.steps || '').split(/\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+  let stepsArr = (r.steps || '').split(/\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
   const draw = () => {
     const plan = getPlan();
     const factor = r.servings > 0 ? portions / r.servings : 1;
     view.innerHTML = `
-      ${r.needsReview ? `<div class="section" style="border-color:#e8b77a">⚠️ Automatisch importiert – bitte über <b>✎</b> prüfen. <button class="btn secondary" id="okBtn" style="margin-top:10px">Ist korrekt</button></div>` : ''}
+      ${r.needsReview ? `<div class="section" style="border-color:#e8b77a">⚠️ Automatisch erkannt – bitte kurz prüfen und bei Bedarf über <b>✎</b> korrigieren.
+        <div class="btn-row"><button class="btn secondary" id="okBtn">Ist korrekt</button></div></div>` : ''}
+      ${(r.pages || []).length && !(r.ingredients || []).length ? `<button class="btn" id="ocrBtn" style="margin-bottom:14px">🔍 Text aus Karte erkennen</button>` : ''}
       <div class="two-col">
         <div class="section">
           <h2>Zutaten</h2>
@@ -435,6 +638,19 @@ async function viewRecipe(view, id) {
     };
     const ok = $('#okBtn');
     if (ok) ok.onclick = async () => { r.needsReview = false; await DB.put(r); draw(); };
+    const ocrBtn = $('#ocrBtn');
+    if (ocrBtn) ocrBtn.onclick = async () => {
+      const b = busy('Texterkennung wird vorbereitet …');
+      try {
+        const text = await ocrPages(r.pages, (m) => b.set(m));
+        applyGuess(r, text, r.title);
+        await DB.put(r);
+        setHeader(r.title, { back: true, action: { label: '✎', aria: 'Bearbeiten', onClick: () => go('#edit/' + id) } });
+        toast((r.ingredients || []).length ? 'Text erkannt – bitte prüfen' : 'Kaum Text erkannt – bitte über ✎ eintragen', 3000);
+      } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
+      stepsArr = (r.steps || '').split(/\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+      draw();
+    };
   };
   const updPlan = () => { const p = getPlan(); if (p[id]) { p[id] = portions; setPlan(p); } };
   draw();
@@ -468,6 +684,7 @@ async function viewEdit(view, id) {
         <div class="section pages">
           <h2>Karteikarte (PDF / Foto)</h2>
           <div id="pages">${pagesHtml()}</div>
+          <button class="btn" id="ocrEdit" style="margin-bottom:10px" ${(r.pages || []).length ? '' : 'hidden'}>🔍 Text aus Karte erkennen</button>
           <button class="btn secondary" id="addPages">PDF / Foto anhängen</button>
         </div>
       </div>
@@ -481,6 +698,23 @@ async function viewEdit(view, id) {
     r.pages.splice(+b.dataset.del, 1);
     r.thumb = r.pages[0] ? await makeThumb(r.pages[0]) : '';
     $('#pages').innerHTML = pagesHtml();
+    $('#ocrEdit').hidden = !r.pages.length;
+  };
+  $('#ocrEdit').onclick = async () => {
+    if (!r.pages.length) return;
+    const filled = $('#fIng').value.trim() || $('#fSteps').value.trim();
+    if (filled && !confirm('Zutaten und Zubereitung durch den erkannten Text ersetzen?')) return;
+    const b = busy('Texterkennung wird vorbereitet …');
+    try {
+      const text = await ocrPages(r.pages, (m) => b.set(m));
+      const g = guessFromText(text, $('#fTitle').value);
+      if (g.title && (!$('#fTitle').value.trim() || GENERIC_NAME.test($('#fTitle').value))) $('#fTitle').value = g.title;
+      if (g.servings) $('#fServ').value = g.servings;
+      $('#fIng').value = parseIngredients(g.ingredients).map(ingredientToLine).join('\n');
+      $('#fSteps').value = g.steps;
+      r.sourceText = text;
+      toast('Text erkannt – bitte prüfen und speichern', 3000);
+    } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
   };
   $('#addPages').onclick = () => {
     const inp = document.createElement('input');
@@ -490,12 +724,21 @@ async function viewEdit(view, id) {
       try {
         for (const f of inp.files) {
           const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
-          const res = isPdf ? await readPdf(f) : await readImage(f);
+          const res = isPdf ? await readPdf(f, (m) => b.set(m)) : await readImage(f, (m) => b.set(m));
           r.pages = [...(r.pages || []), ...res.pages];
           if (res.text) r.sourceText = [r.sourceText, res.text].filter(Boolean).join('\n');
         }
+        // Leere Felder mit dem erkannten Text vorbelegen
+        if (r.sourceText && !$('#fIng').value.trim() && !$('#fSteps').value.trim()) {
+          const g = guessFromText(r.sourceText, $('#fTitle').value);
+          if (g.title && !$('#fTitle').value.trim()) $('#fTitle').value = g.title;
+          if (g.servings) $('#fServ').value = g.servings;
+          $('#fIng').value = parseIngredients(g.ingredients).map(ingredientToLine).join('\n');
+          $('#fSteps').value = g.steps;
+        }
         if (!r.thumb && r.pages[0]) r.thumb = await makeThumb(r.pages[0]);
         $('#pages').innerHTML = pagesHtml();
+        $('#ocrEdit').hidden = !r.pages.length;
       } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
     };
     inp.click();
@@ -685,4 +928,4 @@ async function init() {
 init();
 
 // Für Tests
-window.__rk = { parseIngredient, buildShoppingList, guessFromText };
+window.__rk = { parseIngredient, buildShoppingList, guessFromText, OCR };

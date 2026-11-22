@@ -20,11 +20,12 @@ hochgeladen.
 Danach immer über das Symbol „Rezepte“ starten.
 
 ## 3. Nutzung
-- **Rezepte → +**: PDFs (oder Fotos) der Karteikarten auswählen, auch mehrere gleichzeitig.
-  Hat die PDF eine Textebene, werden Titel, Portionen, Zutaten und Zubereitung automatisch
-  erkannt (Überschriften „Zutaten“ und „Zubereitung“/„Anleitung“ helfen dabei).
-  Eingescannte PDFs ohne Text: Die Karte wird als Bild angezeigt, Zutaten bitte über ✎
-  eintragen (eine pro Zeile, z. B. `200 g Mehl`).
+- **Rezepte → +**: Fotos oder PDFs der Karteikarten auswählen, auch mehrere gleichzeitig.
+  Die App liest den Text der Karte automatisch aus (Texterkennung direkt auf dem Handy,
+  funktioniert offline) und trägt Titel, Portionen, Zutaten und Zubereitung ein – auch bei
+  Karten mit zwei Spalten. Ergebnis kurz prüfen, bei Bedarf über ✎ korrigieren.
+  Tipp für Fotos: Karte gerade, formatfüllend und ohne Schatten fotografieren.
+- Bereits gespeicherte Rezepte ohne Zutaten: Rezept öffnen → **🔍 Text aus Karte erkennen**.
 - **Woche**: Gerichte anhaken, Portionen einstellen → **Bestätigen & Einkaufsliste erstellen**.
   Gleiche Zutaten werden zusammengezählt und auf die Portionen umgerechnet.
 - **Einkauf**: Liste bei Bedarf bearbeiten → **Kopieren** (dann in WhatsApp/SMS einfügen)
