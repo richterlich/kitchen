@@ -922,7 +922,8 @@ function viewList(view) {
         <p class="hint" style="margin-top:0">Wird für die Rezepte gebraucht, ist aber normalerweise da. Antippen, wenn es leer ist – dann kommt es mit auf die Liste.</p>
         <div class="chips" id="pantry">${l.pantry.map((it, i) => `<button class="chip${it.on ? ' on' : ''}" data-p="${i}" aria-pressed="${it.on}">${it.on ? '✓ ' : ''}${esc(itemLabel(it))}</button>`).join('')}</div>
       </div>` : ''}
-      <button class="btn danger" id="clearList">🧹 Liste bereinigen</button>`;
+      <button class="btn secondary" id="cleanList">🧹 Abgehakte entfernen</button>
+      <div class="btn-row"><button class="btn danger" id="clearList">🗑 Ganze Liste löschen</button></div>`;
 
     $('#buy').onclick = (e) => {
       const rm = e.target.closest('[data-rm]');
@@ -965,11 +966,18 @@ function viewList(view) {
     $('#copy').onclick = async () => toast((await copyText(listToText(l))) ? 'Kopiert – jetzt in WhatsApp, SMS o. Ä. einfügen' : 'Kopieren nicht möglich');
     const sh = $('#share');
     if (sh) sh.onclick = () => navigator.share({ title: 'Einkaufsliste', text: listToText(l) }).catch(() => {});
+    $('#cleanList').onclick = () => {
+      const before = l.buy.length;
+      l.buy = l.buy.filter((it) => it.on);
+      const n = before - l.buy.length;
+      save(); draw();
+      toast(n ? `${n} abgehakte${n === 1 ? 'r Eintrag' : ' Einträge'} entfernt` : 'Nichts abgehakt');
+    };
     $('#clearList').onclick = () => {
-      if (!confirm('Einkaufsliste leeren und Wochenauswahl zurücksetzen?')) return;
+      if (!confirm('Die ganze Einkaufsliste löschen?\n(Die Wochenauswahl wird ebenfalls zurückgesetzt.)')) return;
       ls.set('shoppingList', null);
       setPlan({});
-      toast('Liste bereinigt – neue Woche kann geplant werden');
+      toast('Einkaufsliste gelöscht');
       render();
     };
   };
