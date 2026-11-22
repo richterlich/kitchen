@@ -148,6 +148,7 @@ function buildShoppingList(entries) {
   for (const { recipe, portions } of entries) {
     const factor = recipe.servings > 0 ? portions / recipe.servings : 1;
     for (const ing of recipe.ingredients || []) {
+      if (isInstructionText(ing.name)) continue; // Sätze der Anleitung gehören nicht auf die Einkaufsliste
       let unit = ing.unit || '';
       let qty = ing.qty;
       if (qty != null && BASE[unit]) { qty *= BASE[unit][1]; unit = BASE[unit][0]; }
@@ -417,6 +418,10 @@ function looksLikeIngredient(l) {
   if (UNIT_MAP[first] || /^(etwas|n\.\s?b\.|nach belieben|evtl\.|optional)/i.test(l)) return true;
   return w <= 3 && !/[.!?:]$/.test(l);
 }
+function isInstructionText(name) {
+  const l = String(name || '').trim();
+  return !l || l.length > 70 || STEP_HEAD.test(l) || ING_HEAD.test(l) || (looksLikeSentence(l) && !/^\s*[\d½¼¾]/.test(l));
+}
 function looksLikeSentence(l) {
   const w = words(l);
   return isStepNumber(l) || w >= 8 || (w >= 4 && /[.!?]$/.test(l)) || /[a-zäöüß]{4,}[.!?]$/.test(l) && !/^\s*[\d½¼¾]/.test(l);
@@ -473,8 +478,10 @@ function applyGuess(rec, text, fallbackTitle) {
   const g = guessFromText(text, fallbackTitle);
   rec.title = g.title || rec.title || 'Neues Rezept';
   if (g.servings) rec.servings = g.servings;
-  rec.ingredients = parseIngredients(g.ingredients);
-  rec.steps = g.steps;
+  const all = parseIngredients(g.ingredients);
+  const moved = all.filter((i) => isInstructionText(i.name)).map(ingredientToLine);
+  rec.ingredients = all.filter((i) => !isInstructionText(i.name));
+  rec.steps = [g.steps, ...moved].filter(Boolean).join('\n');
   rec.sourceText = text;
   rec.needsReview = true;
 }
@@ -598,6 +605,16 @@ function addMenu() {
   $('#manual').onclick = () => go('#edit/new');
 }
 
+async function deleteRecipe(r) {
+  if (!confirm(`„${r.title}“ wirklich löschen?\nDas kann nicht rückgängig gemacht werden.`)) return false;
+  await DB.del(r.id);
+  const p = getPlan(); delete p[r.id]; setPlan(p);
+  toast('Rezept gelöscht');
+  history.replaceState(null, '', '#recipes');
+  render();
+  return true;
+}
+
 async function viewRecipe(view, id) {
   const r = await DB.get(id);
   if (!r) return go('#recipes');
@@ -627,7 +644,13 @@ async function viewRecipe(view, id) {
           </div>
           ${(r.pages || []).length ? `<details class="section pages" ${!(r.ingredients || []).length && !stepsArr.length ? 'open' : ''}><summary>Original-Karteikarte (${r.pages.length} Seite${r.pages.length > 1 ? 'n' : ''})</summary>${r.pages.map((p) => `<img src="${p}" alt="Karteikarte" loading="lazy">`).join('')}</details>` : ''}
         </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn secondary" id="editBtn">✎ Bearbeiten</button>
+        <button class="btn danger" id="delBtn">🗑 Löschen</button>
       </div>`;
+    $('#editBtn').onclick = () => go('#edit/' + id);
+    $('#delBtn').onclick = () => deleteRecipe(r);
     $('#minus').onclick = () => { if (portions > 1) { portions--; updPlan(); draw(); } };
     $('#plus').onclick = () => { portions++; updPlan(); draw(); };
     $('#weekBtn').onclick = () => {
@@ -755,14 +778,7 @@ async function viewEdit(view, id) {
     render();
   };
   const del = $('#del');
-  if (del) del.onclick = async () => {
-    if (!confirm(`„${r.title}“ wirklich löschen?`)) return;
-    await DB.del(r.id);
-    const p = getPlan(); delete p[r.id]; setPlan(p);
-    toast('Gelöscht');
-    history.replaceState(null, '', '#recipes');
-    render();
-  };
+  if (del) del.onclick = () => deleteRecipe(r);
 }
 
 async function viewWeek(view) {
@@ -813,8 +829,7 @@ async function viewWeek(view) {
       const items = buildShoppingList(entries);
       const d = new Date();
       const text = `Einkaufsliste (${d.toLocaleDateString('de-DE')})\n\n` +
-        items.map((i) => '- ' + i).join('\n') +
-        `\n\nGerichte:\n` + entries.map((e) => `• ${e.recipe.title} (${e.portions} Port.)`).join('\n');
+        items.map((i) => '- ' + i).join('\n');
       ls.set('shoppingList', text);
       go('#list');
     }
@@ -865,6 +880,10 @@ function viewSettings(view) {
       <div class="btn-row"><button class="btn secondary" id="imp">Sicherung importieren</button></div>
     </div>
     <div class="section">
+      <h2>Rezepte löschen</h2>
+      <div id="delList"><p class="hint">…</p></div>
+    </div>
+    <div class="section">
       <h2>Speicher</h2>
       <p class="hint" id="storeInfo">…</p>
     </div>`;
@@ -892,6 +911,23 @@ function viewSettings(view) {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
   $('#imp').onclick = () => $('#backupInput').click();
+  const drawDel = async () => {
+    const all = await loadRecipes();
+    $('#delList').innerHTML = all.length
+      ? all.map((r) => `<div class="week-item"><span class="name">${esc(r.title)}</span><button class="icon-btn" data-del="${esc(r.id)}" aria-label="${esc(r.title)} löschen" style="color:var(--danger);font-size:18px">🗑</button></div>`).join('')
+      : '<p class="hint">Keine Rezepte vorhanden.</p>';
+  };
+  drawDel();
+  $('#delList').onclick = async (e) => {
+    const b = e.target.closest('[data-del]');
+    if (!b) return;
+    const r = recipesCache.find((x) => x.id === b.dataset.del);
+    if (!r || !confirm(`„${r.title}“ wirklich löschen?`)) return;
+    await DB.del(r.id);
+    const p = getPlan(); delete p[r.id]; setPlan(p);
+    toast('Rezept gelöscht');
+    drawDel();
+  };
 }
 
 /* ---------- Start ---------- */
