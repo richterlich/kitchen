@@ -26,10 +26,11 @@ Danach immer über das Symbol „Rezepte“ starten.
   Karten mit zwei Spalten. Ergebnis kurz prüfen, bei Bedarf über ✎ korrigieren.
   Tipp für Fotos: Karte gerade, formatfüllend und ohne Schatten fotografieren.
 - Bereits gespeicherte Rezepte ohne Zutaten: Rezept öffnen → **🔍 Text aus Karte erkennen**.
-- **Woche**: Gerichte anhaken, Portionen einstellen → **Bestätigen & Einkaufsliste erstellen**.
-  Gleiche Zutaten werden zusammengezählt und auf die Portionen umgerechnet.
+- **Woche**: Gerichte anhaken → **Bestätigen & Einkaufsliste erstellen**.
+  Die Liste enthält nur die Zutaten ohne Mengen (z. B. „Huhn“). Wird eine Zutat in mehreren
+  Rezepten gebraucht, steht davor, wie oft (z. B. „2x Zwiebel“).
 - **Einkauf**: Liste bei Bedarf bearbeiten → **Kopieren** (dann in WhatsApp/SMS einfügen)
-  oder **Senden** (öffnet direkt das Teilen-Menü).
+  oder **Senden**. **Liste bereinigen** leert die Liste und setzt die Wochenauswahl zurück.
 - **Daten**: Sicherung exportieren/importieren. Die beiden Handys synchronisieren sich
   **nicht** automatisch – Rezepte auf einem Handy erfassen, Sicherung exportieren, auf dem
   anderen Handy importieren. Regelmäßig sichern, falls die App/Browserdaten gelöscht werden.

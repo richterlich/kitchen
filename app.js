@@ -140,42 +140,42 @@ function ingredientToLine(i) {
   return [i.qty != null ? fmtNum(i.qty) : '', i.unit, i.name].filter(Boolean).join(' ');
 }
 
-// Einheiten zum Zusammenzählen auf Basiseinheit bringen
-const BASE = { kg: ['g', 1000], mg: ['g', 0.001], l: ['ml', 1000], dl: ['ml', 100], cl: ['ml', 10] };
+// Einkaufsliste: nur Zutatennamen, ohne Mengen/Einheiten.
+// Wird eine Zutat in mehreren Rezepten gebraucht, steht "2x", "3x" … davor.
+function shoppingNames(name) {
+  return String(name || '')
+    .replace(/\([^)]*\)/g, ' ') // Klammerzusätze, z. B. "(ca. 200 g)"
+    .split(/,|;|\s+und\s+|\s+oder\s+|\s*&\s*|\s*\/\s*/i)
+    .map((n) => n
+      .replace(/^(etwas|evtl\.?|eventuell|optional|nach belieben|n\.\s?b\.?|ggf\.?|frisch gemahlener?|frischer?|einige|ein paar|wenig|viel)\s+/i, '')
+      .replace(/\s+(nach belieben|zum (bestreuen|garnieren|braten|anbraten|servieren)|optional|n\.\s?b\.?)$/i, '')
+      .replace(/^[\s\-–•.:]+|[\s\-–.:]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter((n) => /[A-Za-zÄÖÜäöüß]{2,}/.test(n));
+}
 function buildShoppingList(entries) {
   // entries: [{recipe, portions}]
   const map = new Map();
-  for (const { recipe, portions } of entries) {
-    const factor = recipe.servings > 0 ? portions / recipe.servings : 1;
+  for (const { recipe } of entries) {
+    const seen = new Set(); // pro Rezept jede Zutat nur einmal zählen
     for (const ing of recipe.ingredients || []) {
       if (isInstructionText(ing.name)) continue; // Sätze der Anleitung gehören nicht auf die Einkaufsliste
-      let unit = ing.unit || '';
-      let qty = ing.qty;
-      if (qty != null && BASE[unit]) { qty *= BASE[unit][1]; unit = BASE[unit][0]; }
-      // Singular/Plural zusammenführen (Zwiebel/Zwiebeln, Tomate/Tomaten)
-      const nameKey = ing.name.toLowerCase().replace(/\s+/g, ' ').trim().replace(/(en|n|e|s)$/, '');
-      const key = nameKey + '|' + unit;
-      const cur = map.get(key) || { name: ing.name.trim(), unit, qty: null, noQty: false };
-      if (ing.name.trim().length > cur.name.length) cur.name = ing.name.trim();
-      if (qty != null) cur.qty = (cur.qty || 0) + qty * factor;
-      else cur.noQty = true;
-      map.set(key, cur);
+      for (const name of shoppingNames(ing.name)) {
+        // Singular/Plural zusammenführen (Zwiebel/Zwiebeln, Tomate/Tomaten)
+        const key = name.toLowerCase().replace(/(en|n|e|s)$/, '');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const cur = map.get(key) || { name, count: 0 };
+        if (name.length < cur.name.length) cur.name = name; // kürzeste Form ("Zwiebel")
+        cur.count++;
+        map.set(key, cur);
+      }
     }
   }
-  const items = [...map.values()].map((it) => {
-    let { qty, unit } = it;
-    if (qty != null && unit === 'g' && qty >= 1000) { qty /= 1000; unit = 'kg'; }
-    if (qty != null && unit === 'ml' && qty >= 1000) { qty /= 1000; unit = 'l'; }
-    if (qty != null && ['Stk.', 'Dose', 'Pck.', 'Bund', 'Zehe', 'Becher', 'Glas', 'Kopf', 'Knolle', 'Flasche', 'Beutel', 'Stange', ''].includes(unit)) {
-      qty = Math.ceil(qty * 4 - 1e-9) / 4; // Stückzahlen auf Viertel aufrunden
-    }
-    const PLURAL = { Zehe: 'Zehen', Dose: 'Dosen', Scheibe: 'Scheiben', Tasse: 'Tassen', Stange: 'Stangen', Knolle: 'Knollen', Flasche: 'Flaschen', Zweig: 'Zweige', Prise: 'Prisen', Kopf: 'Köpfe' };
-    if (qty != null && qty > 1 && PLURAL[unit]) unit = PLURAL[unit];
-    const q = qty != null ? [fmtNum(qty), unit].filter(Boolean).join(' ') : unit;
-    return { text: [q, it.name].filter(Boolean).join(' '), sort: it.name.toLowerCase() };
-  });
-  items.sort((a, b) => a.sort.localeCompare(b.sort, 'de'));
-  return items.map((i) => i.text);
+  return [...map.values()]
+    .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+    .map((it) => (it.count > 1 ? `${it.count}x ` : '') + it.name);
 }
 
 /* ---------- PDF / Bild-Import ---------- */
@@ -861,11 +861,19 @@ function viewList(view) {
         ${navigator.share ? '<button class="btn secondary" id="share">📤 Senden</button>' : ''}
       </div>
       <textarea class="list" id="listText">${esc(text)}</textarea>
+      <div class="btn-row"><button class="btn danger" id="clearList">🧹 Liste bereinigen</button></div>
     </div>`;
   const ta = $('#listText');
   ta.style.height = Math.max(300, ta.scrollHeight + 4) + 'px';
   ta.oninput = () => ls.set('shoppingList', ta.value);
   $('#copy').onclick = async () => toast((await copyText(ta.value)) ? 'Kopiert – jetzt in WhatsApp, SMS o. Ä. einfügen' : 'Kopieren nicht möglich – Text markieren und manuell kopieren');
+  $('#clearList').onclick = () => {
+    if (!confirm('Einkaufsliste leeren und Wochenauswahl zurücksetzen?')) return;
+    ls.set('shoppingList', '');
+    setPlan({});
+    toast('Liste bereinigt – neue Woche kann geplant werden');
+    render();
+  };
   const sh = $('#share');
   if (sh) sh.onclick = () => navigator.share({ title: 'Einkaufsliste', text: ta.value }).catch(() => {});
 }
