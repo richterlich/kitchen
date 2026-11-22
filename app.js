@@ -903,12 +903,13 @@ function viewList(view) {
       </div>
       <div class="section">
         <h2>Einkaufen</h2>
-        <p class="hint" style="margin-top:0">Antippen zum Abhaken (wird nicht mitkopiert). 🏠 = haben wir immer → in den Vorrat.</p>
+        <p class="hint" style="margin-top:0">Antippen zum Abhaken (wird nicht mitkopiert). 🏠 = haben wir immer → in den Vorrat. ✕ = Eintrag löschen.</p>
         <div id="buy">${l.buy.map((it, i) => `
           <div class="week-item${it.on ? '' : ' off'}" data-i="${i}">
             <input type="checkbox" ${it.on ? 'checked' : ''} aria-label="${esc(it.name)} mitnehmen">
             <span class="name">${esc(itemLabel(it))}</span>
             <button class="icon-btn" data-home="${i}" aria-label="${esc(it.name)} in den Vorrat" style="font-size:18px">🏠</button>
+            <button class="icon-btn" data-rm="${i}" aria-label="${esc(it.name)} löschen" style="font-size:18px;color:var(--danger);background:transparent;border:1px solid var(--line)">✕</button>
           </div>`).join('') || '<p class="hint">Alles im Vorrat.</p>'}</div>
         <form id="addForm" class="add-row">
           <input id="addInput" placeholder="Weitere Zutat hinzufügen …" autocomplete="off" enterkeyhint="done">
@@ -924,6 +925,13 @@ function viewList(view) {
       <button class="btn danger" id="clearList">🧹 Liste bereinigen</button>`;
 
     $('#buy').onclick = (e) => {
+      const rm = e.target.closest('[data-rm]');
+      if (rm) {
+        const it = l.buy.splice(+rm.dataset.rm, 1)[0];
+        save(); draw();
+        toast(`„${it.name}“ gelöscht`);
+        return;
+      }
       const home = e.target.closest('[data-home]');
       if (home) {
         const it = l.buy.splice(+home.dataset.home, 1)[0];

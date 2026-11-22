@@ -29,7 +29,7 @@ Danach immer über das Symbol „Rezepte“ starten.
 - **Woche**: Gerichte anhaken → **Bestätigen & Einkaufsliste erstellen**.
   Die Liste enthält nur die Zutaten ohne Mengen (z. B. „Huhn“). Wird eine Zutat in mehreren
   Rezepten gebraucht, steht davor, wie oft (z. B. „2x Zwiebel“).
-- **Einkauf**: Einträge antippen zum Abhaken (werden nicht mitkopiert), 🏠 verschiebt eine
+- **Einkauf**: Einträge antippen zum Abhaken (werden nicht mitkopiert), ✕ löscht einen Eintrag, 🏠 verschiebt eine
   Zutat dauerhaft in den Vorrat, mit „+“ eigene Einträge ergänzen (z. B. Klopapier).
   **Vorrat prüfen**: Gewürze und Grundzutaten, die man meist zu Hause hat, stehen separat –
   nur antippen, wenn etwas leer ist, dann kommt es mit auf die Liste.

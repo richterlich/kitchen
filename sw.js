@@ -1,5 +1,5 @@
 // Offline-Cache: App funktioniert nach dem ersten Öffnen ohne Internet.
-const CACHE = 'rezeptkartei-v3';
+const CACHE = 'rezeptkartei-v4';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg',
   'icon-180.png', 'icon-192.png', 'icon-512.png', 'lib/pdf.min.js', 'lib/pdf.worker.min.js',
   'lib/tesseract/tesseract.min.js', 'lib/tesseract/worker.min.js', 'lib/tesseract/lang/deu.traineddata.gz'];
