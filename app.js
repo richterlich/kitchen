@@ -1,5 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
+const APP_VERSION = '6';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -871,13 +872,7 @@ async function copyText(text) {
 function getList() {
   const l = ls.get('shoppingList', null);
   if (!l) return null;
-  if (typeof l === 'string') { // ältere Version: reiner Text
-    const buy = l.split('\n').filter((x) => /^- /.test(x)).map((x) => {
-      const m = x.slice(2).match(/^(\d+)x (.+)$/);
-      return m ? { name: m[2], count: +m[1], on: true } : { name: x.slice(2), count: 1, on: true };
-    });
-    return buy.length ? { date: '', buy, pantry: [] } : null;
-  }
+  if (typeof l === 'string' || !Array.isArray(l.buy)) return null; // Liste aus alter Version: bitte neu erstellen
   return l;
 }
 function listToText(l) {
@@ -1013,7 +1008,7 @@ function viewSettings(view) {
     </div>`;
   (async () => {
     const all = await DB.all();
-    let s = `${all.length} Rezepte gespeichert.`;
+    let s = `App-Version ${APP_VERSION}. ${all.length} Rezepte gespeichert.`;
     if (navigator.storage && navigator.storage.estimate) {
       const est = await navigator.storage.estimate();
       s += ` Belegt: ca. ${(est.usage / 1048576).toFixed(1)} MB.`;
@@ -1104,7 +1099,20 @@ async function init() {
   window.addEventListener('hashchange', render);
   render();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    // Updates automatisch holen: beim Start und wenn die App wieder in den Vordergrund kommt
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+    }).catch(() => {});
   }
 }
 init();
