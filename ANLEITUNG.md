@@ -29,8 +29,12 @@ Danach immer über das Symbol „Rezepte“ starten.
 - **Woche**: Gerichte anhaken → **Bestätigen & Einkaufsliste erstellen**.
   Die Liste enthält nur die Zutaten ohne Mengen (z. B. „Huhn“). Wird eine Zutat in mehreren
   Rezepten gebraucht, steht davor, wie oft (z. B. „2x Zwiebel“).
-- **Einkauf**: Liste bei Bedarf bearbeiten → **Kopieren** (dann in WhatsApp/SMS einfügen)
-  oder **Senden**. **Liste bereinigen** leert die Liste und setzt die Wochenauswahl zurück.
+- **Einkauf**: Einträge antippen zum Abhaken (werden nicht mitkopiert), 🏠 verschiebt eine
+  Zutat dauerhaft in den Vorrat, mit „+“ eigene Einträge ergänzen (z. B. Klopapier).
+  **Vorrat prüfen**: Gewürze und Grundzutaten, die man meist zu Hause hat, stehen separat –
+  nur antippen, wenn etwas leer ist, dann kommt es mit auf die Liste.
+  Dann **Kopieren** oder **Senden**. **Liste bereinigen** leert die Liste und setzt die Wochenauswahl zurück.
+- **Daten → Vorrat**: festlegen, was ihr immer im Haus habt (Standardliste mit üblichen Gewürzen).
 - **Daten**: Sicherung exportieren/importieren. Die beiden Handys synchronisieren sich
   **nicht** automatisch – Rezepte auf einem Handy erfassen, Sicherung exportieren, auf dem
   anderen Handy importieren. Regelmäßig sichern, falls die App/Browserdaten gelöscht werden.

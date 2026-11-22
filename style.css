@@ -146,3 +146,12 @@ textarea.list {
 }
 .busy { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: grid; place-items: center; z-index: 30; }
 .busy div { background: var(--card); padding: 18px 24px; border-radius: 14px; }
+
+/* Einkaufsliste & Vorrat */
+.week-item.off .name { text-decoration: line-through; color: var(--muted); }
+.add-row { display: flex; gap: 8px; margin-top: 12px; }
+.add-row input { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 999px; padding: 8px 14px; font-size: 15px; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .chip.on { color: #0f1a14; } }

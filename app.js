@@ -154,29 +154,55 @@ function shoppingNames(name) {
       .trim())
     .filter((n) => /[A-Za-zÄÖÜäöüß]{2,}/.test(n));
 }
+/* ---------- Vorrat (Dinge, die man meistens zu Hause hat) ---------- */
+const DEFAULT_PANTRY = ['Salz', 'Pfeffer', 'Zucker', 'Mehl', 'Öl', 'Olivenöl', 'Sonnenblumenöl', 'Rapsöl', 'Essig',
+  'Balsamico', 'Paprikapulver', 'Currypulver', 'Curry', 'Kreuzkümmel', 'Kurkuma', 'Zimt', 'Muskat', 'Muskatnuss',
+  'Oregano', 'Majoran', 'Chilipulver', 'Chiliflocken', 'Cayennepfeffer', 'Lorbeerblatt', 'Knoblauchpulver',
+  'Gemüsebrühe', 'Brühe', 'Backpulver', 'Natron', 'Vanillezucker', 'Puderzucker', 'Speisestärke', 'Senf',
+  'Sojasauce', 'Honig'];
+const itemKey = (name) => String(name).toLowerCase().replace(/\s+/g, ' ').trim().replace(/(en|n|e|s)$/, '');
+const getPantry = () => ls.get('pantry', DEFAULT_PANTRY);
+const setPantry = (list) => ls.set('pantry', [...new Map(list.map((n) => [itemKey(n), n.trim()])).values()].filter(Boolean).sort((a, b) => a.localeCompare(b, 'de')));
+// Gehört eine Zutat zum Vorrat? Auch "schwarzer Pfeffer" oder "Salz grob" passen zu "Pfeffer"/"Salz".
+// Liefert den passenden Vorrats-Namen oder null
+function pantryMatch(name, pantry = getPantry()) {
+  const byKey = new Map(pantry.map((n) => [itemKey(n), n]));
+  if (byKey.has(itemKey(name))) return byKey.get(itemKey(name));
+  for (const w of String(name).split(/\s+/)) if (byKey.has(itemKey(w))) return byKey.get(itemKey(w));
+  return null;
+}
+
 function buildShoppingList(entries) {
   // entries: [{recipe, portions}]
   const map = new Map();
+  const pantry = getPantry();
   for (const { recipe } of entries) {
     const seen = new Set(); // pro Rezept jede Zutat nur einmal zählen
     for (const ing of recipe.ingredients || []) {
       if (isInstructionText(ing.name)) continue; // Sätze der Anleitung gehören nicht auf die Einkaufsliste
-      for (const name of shoppingNames(ing.name)) {
+      for (const raw of shoppingNames(ing.name)) {
+        const pm = pantryMatch(raw, pantry);
+        const name = pm || raw; // "schwarzer Pfeffer" -> "Pfeffer"
+        const isP = !!pm;
         // Singular/Plural zusammenführen (Zwiebel/Zwiebeln, Tomate/Tomaten)
-        const key = name.toLowerCase().replace(/(en|n|e|s)$/, '');
+        const key = itemKey(name);
         if (seen.has(key)) continue;
         seen.add(key);
-        const cur = map.get(key) || { name, count: 0 };
+        const cur = map.get(key) || { name, count: 0, isP };
         if (name.length < cur.name.length) cur.name = name; // kürzeste Form ("Zwiebel")
         cur.count++;
         map.set(key, cur);
       }
     }
   }
-  return [...map.values()]
-    .sort((a, b) => a.name.localeCompare(b.name, 'de'))
-    .map((it) => (it.count > 1 ? `${it.count}x ` : '') + it.name);
+  // Ergebnis: { buy: [...], pantry: [...] } – jeweils {name, count}
+  const all = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  return {
+    buy: all.filter((it) => !it.isP).map(({ name, count }) => ({ name, count, on: true })),
+    pantry: all.filter((it) => it.isP).map(({ name, count }) => ({ name, count, on: false })),
+  };
 }
+const itemLabel = (it) => (it.count > 1 ? `${it.count}x ` : '') + it.name;
 
 /* ---------- PDF / Bild-Import ---------- */
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
@@ -826,11 +852,8 @@ async function viewWeek(view) {
     if (e.target.id === 'confirm') {
       const entries = recipes.filter((r) => plan[r.id]).map((r) => ({ recipe: r, portions: plan[r.id] }));
       if (!entries.length) return;
-      const items = buildShoppingList(entries);
-      const d = new Date();
-      const text = `Einkaufsliste (${d.toLocaleDateString('de-DE')})\n\n` +
-        items.map((i) => '- ' + i).join('\n');
-      ls.set('shoppingList', text);
+      const list = buildShoppingList(entries);
+      ls.set('shoppingList', { date: new Date().toLocaleDateString('de-DE'), ...list });
       go('#list');
     }
   };
@@ -845,37 +868,104 @@ async function copyText(text) {
   ta.remove(); return ok;
 }
 
+function getList() {
+  const l = ls.get('shoppingList', null);
+  if (!l) return null;
+  if (typeof l === 'string') { // ältere Version: reiner Text
+    const buy = l.split('\n').filter((x) => /^- /.test(x)).map((x) => {
+      const m = x.slice(2).match(/^(\d+)x (.+)$/);
+      return m ? { name: m[2], count: +m[1], on: true } : { name: x.slice(2), count: 1, on: true };
+    });
+    return buy.length ? { date: '', buy, pantry: [] } : null;
+  }
+  return l;
+}
+function listToText(l) {
+  const items = [...l.buy, ...l.pantry].filter((it) => it.on).sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  return `Einkaufsliste${l.date ? ` (${l.date})` : ''}\n\n` + items.map((it) => '- ' + itemLabel(it)).join('\n');
+}
+
 function viewList(view) {
   setHeader('Einkaufsliste');
-  const text = ls.get('shoppingList', '');
-  if (!text) {
+  const l = getList();
+  if (!l) {
     view.innerHTML = `<div class="empty"><div class="big">🛒</div><p>Noch keine Einkaufsliste.<br>Wähle unter „Woche“ deine Gerichte aus und bestätige.</p></div><button class="btn" id="toWeek">Zur Wochenauswahl</button>`;
     $('#toWeek').onclick = () => go('#week');
     return;
   }
-  view.innerHTML = `
-    <div class="section">
-      <p class="hint" style="margin-top:0">Du kannst die Liste hier noch bearbeiten (z. B. Dinge löschen, die du schon hast).</p>
-      <div class="btn-row" style="margin:0 0 12px">
-        <button class="btn" id="copy">📋 Kopieren</button>
+  const save = () => ls.set('shoppingList', l);
+  const draw = () => {
+    const count = [...l.buy, ...l.pantry].filter((it) => it.on).length;
+    view.innerHTML = `
+      <div class="btn-row" style="margin:0 0 14px">
+        <button class="btn" id="copy">📋 Kopieren (${count})</button>
         ${navigator.share ? '<button class="btn secondary" id="share">📤 Senden</button>' : ''}
       </div>
-      <textarea class="list" id="listText">${esc(text)}</textarea>
-      <div class="btn-row"><button class="btn danger" id="clearList">🧹 Liste bereinigen</button></div>
-    </div>`;
-  const ta = $('#listText');
-  ta.style.height = Math.max(300, ta.scrollHeight + 4) + 'px';
-  ta.oninput = () => ls.set('shoppingList', ta.value);
-  $('#copy').onclick = async () => toast((await copyText(ta.value)) ? 'Kopiert – jetzt in WhatsApp, SMS o. Ä. einfügen' : 'Kopieren nicht möglich – Text markieren und manuell kopieren');
-  $('#clearList').onclick = () => {
-    if (!confirm('Einkaufsliste leeren und Wochenauswahl zurücksetzen?')) return;
-    ls.set('shoppingList', '');
-    setPlan({});
-    toast('Liste bereinigt – neue Woche kann geplant werden');
-    render();
+      <div class="section">
+        <h2>Einkaufen</h2>
+        <p class="hint" style="margin-top:0">Antippen zum Abhaken (wird nicht mitkopiert). 🏠 = haben wir immer → in den Vorrat.</p>
+        <div id="buy">${l.buy.map((it, i) => `
+          <div class="week-item${it.on ? '' : ' off'}" data-i="${i}">
+            <input type="checkbox" ${it.on ? 'checked' : ''} aria-label="${esc(it.name)} mitnehmen">
+            <span class="name">${esc(itemLabel(it))}</span>
+            <button class="icon-btn" data-home="${i}" aria-label="${esc(it.name)} in den Vorrat" style="font-size:18px">🏠</button>
+          </div>`).join('') || '<p class="hint">Alles im Vorrat.</p>'}</div>
+        <form id="addForm" class="add-row">
+          <input id="addInput" placeholder="Weitere Zutat hinzufügen …" autocomplete="off" enterkeyhint="done">
+          <button class="icon-btn" type="submit" aria-label="Hinzufügen">+</button>
+        </form>
+      </div>
+      ${l.pantry.length ? `
+      <div class="section">
+        <h2>Vorrat prüfen</h2>
+        <p class="hint" style="margin-top:0">Wird für die Rezepte gebraucht, ist aber normalerweise da. Antippen, wenn es leer ist – dann kommt es mit auf die Liste.</p>
+        <div class="chips" id="pantry">${l.pantry.map((it, i) => `<button class="chip${it.on ? ' on' : ''}" data-p="${i}" aria-pressed="${it.on}">${it.on ? '✓ ' : ''}${esc(itemLabel(it))}</button>`).join('')}</div>
+      </div>` : ''}
+      <button class="btn danger" id="clearList">🧹 Liste bereinigen</button>`;
+
+    $('#buy').onclick = (e) => {
+      const home = e.target.closest('[data-home]');
+      if (home) {
+        const it = l.buy.splice(+home.dataset.home, 1)[0];
+        setPantry([...getPantry(), it.name]);
+        l.pantry.push({ ...it, on: false });
+        l.pantry.sort((a, b) => a.name.localeCompare(b.name, 'de'));
+        save(); draw();
+        toast(`„${it.name}“ ist jetzt im Vorrat`);
+        return;
+      }
+      const row = e.target.closest('[data-i]');
+      if (!row) return;
+      const it = l.buy[+row.dataset.i];
+      it.on = !it.on; save(); draw();
+    };
+    const pan = $('#pantry');
+    if (pan) pan.onclick = (e) => {
+      const c = e.target.closest('[data-p]');
+      if (!c) return;
+      const it = l.pantry[+c.dataset.p];
+      it.on = !it.on; save(); draw();
+    };
+    $('#addForm').onsubmit = (e) => {
+      e.preventDefault();
+      const name = $('#addInput').value.trim();
+      if (!name) return;
+      l.buy.push({ name, count: 1, on: true });
+      save(); draw();
+      $('#addInput').focus();
+    };
+    $('#copy').onclick = async () => toast((await copyText(listToText(l))) ? 'Kopiert – jetzt in WhatsApp, SMS o. Ä. einfügen' : 'Kopieren nicht möglich');
+    const sh = $('#share');
+    if (sh) sh.onclick = () => navigator.share({ title: 'Einkaufsliste', text: listToText(l) }).catch(() => {});
+    $('#clearList').onclick = () => {
+      if (!confirm('Einkaufsliste leeren und Wochenauswahl zurücksetzen?')) return;
+      ls.set('shoppingList', null);
+      setPlan({});
+      toast('Liste bereinigt – neue Woche kann geplant werden');
+      render();
+    };
   };
-  const sh = $('#share');
-  if (sh) sh.onclick = () => navigator.share({ title: 'Einkaufsliste', text: ta.value }).catch(() => {});
+  draw();
 }
 
 function viewSettings(view) {
@@ -886,6 +976,16 @@ function viewSettings(view) {
       <p class="hint">Alle Rezepte sind nur auf diesem Gerät gespeichert. Erstelle ab und zu eine Sicherung – damit kannst du die Rezepte auch auf das andere Handy übertragen (Datei per AirDrop, Mail, Cloud o. Ä. schicken und dort importieren).</p>
       <button class="btn" id="exp">Sicherung exportieren</button>
       <div class="btn-row"><button class="btn secondary" id="imp">Sicherung importieren</button></div>
+    </div>
+    <div class="section">
+      <h2>Vorrat (haben wir immer)</h2>
+      <p class="hint" style="margin-top:0">Diese Zutaten stehen auf der Einkaufsliste nur unter „Vorrat prüfen“. Antippen zum Entfernen.</p>
+      <div class="chips" id="pantryEdit"></div>
+      <form id="pantryForm" class="add-row">
+        <input id="pantryInput" placeholder="Zum Vorrat hinzufügen, z. B. Thymian" autocomplete="off" enterkeyhint="done">
+        <button class="icon-btn" type="submit" aria-label="Hinzufügen">+</button>
+      </form>
+      <button class="btn secondary" id="pantryReset" style="margin-top:10px">Standard-Vorrat wiederherstellen</button>
     </div>
     <div class="section">
       <h2>Rezepte löschen</h2>
@@ -919,6 +1019,28 @@ function viewSettings(view) {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
   $('#imp').onclick = () => $('#backupInput').click();
+  const drawPantry = () => {
+    $('#pantryEdit').innerHTML = getPantry().map((n) => `<button class="chip" data-n="${esc(n)}">${esc(n)} ✕</button>`).join('') || '<p class="hint">Leer.</p>';
+  };
+  drawPantry();
+  $('#pantryEdit').onclick = (e) => {
+    const c = e.target.closest('[data-n]');
+    if (!c) return;
+    setPantry(getPantry().filter((n) => n !== c.dataset.n));
+    drawPantry();
+  };
+  $('#pantryForm').onsubmit = (e) => {
+    e.preventDefault();
+    const v = $('#pantryInput').value.trim();
+    if (!v) return;
+    setPantry([...getPantry(), ...v.split(/,\s*/)]);
+    $('#pantryInput').value = '';
+    drawPantry();
+  };
+  $('#pantryReset').onclick = () => {
+    if (!confirm('Vorrat auf die Standardliste zurücksetzen?')) return;
+    setPantry(DEFAULT_PANTRY); drawPantry();
+  };
   const drawDel = async () => {
     const all = await loadRecipes();
     $('#delList').innerHTML = all.length
