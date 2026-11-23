@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = 'v0.1.1';
+const APP_VERSION = 'v0.1.1.1';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -800,7 +800,7 @@ function getList() {
   return l;
 }
 /* ---------- Geschäfte (Billa / Penny) ---------- */
-const STORES = ['Billa', 'Penny'];
+const STORES = ['Billa', 'Penny', 'Sonstiges'];
 const getStorePrefs = () => ls.get('storePref', {});
 // Gemerktes Geschäft einer Zutat (wird bei der nächsten Liste automatisch gesetzt)
 const storeFor = (name) => getStorePrefs()[itemKey(name)] || '';
@@ -812,11 +812,17 @@ function setStorePref(name, store) {
 const storeRank = (st) => (st ? STORES.indexOf(st) : STORES.length);
 
 function listToText(l) {
-  // Sortiert: erst Billa, dann Penny, dann ohne Geschäft – jeweils alphabetisch
+  // Gruppiert mit Überschrift: Billa, Penny, Sonstiges – danach Zutaten ohne Geschäft; jeweils alphabetisch
   const items = [...l.buy, ...l.pantry].filter((it) => it.on)
     .sort((a, b) => storeRank(a.store) - storeRank(b.store) || a.name.localeCompare(b.name, 'de'));
+  const groups = [];
+  for (const it of items) {
+    const st = STORES.includes(it.store) ? it.store : '';
+    if (!groups.length || groups[groups.length - 1].st !== st) groups.push({ st, lines: [] });
+    groups[groups.length - 1].lines.push('- ' + itemLabel(it));
+  }
   return `Einkaufsliste${l.date ? ` (${l.date})` : ''}\n\n` +
-    items.map((it) => '- ' + itemLabel(it) + (it.store ? ` (${it.store})` : '')).join('\n');
+    groups.map((g) => (g.st ? g.st + ':\n' : '') + g.lines.join('\n')).join('\n\n');
 }
 
 function viewList(view) {
@@ -837,7 +843,7 @@ function viewList(view) {
       </div>
       <div class="section">
         <h2>Einkaufen</h2>
-        <p class="hint" style="margin-top:0">Antippen zum Abhaken (wird nicht mitkopiert). Billa/Penny = wo kaufen (wird gemerkt). 🏠 = haben wir immer → in den Vorrat. ✕ = Eintrag löschen.</p>
+        <p class="hint" style="margin-top:0">Antippen zum Abhaken (wird nicht mitkopiert). Billa/Penny/Sonstiges = wo kaufen (wird gemerkt). 🏠 = haben wir immer → in den Vorrat. ✕ = Eintrag löschen.</p>
         <div id="buy">${l.buy.map((it, i) => `
           <div class="week-item${it.on ? '' : ' off'}" data-i="${i}">
             <input type="checkbox" ${it.on ? 'checked' : ''} aria-label="${esc(it.name)} mitnehmen">

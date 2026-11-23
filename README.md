@@ -29,8 +29,8 @@ Danach immer über das Symbol „Rezepte“ starten.
   Gleiche Zutaten werden zusammengerechnet (300 g + 200 g Huhn = 500 g Huhn) und auf die
   gewählten Portionen umgerechnet. Zutaten mit EL/TL/Prise erscheinen nur mit Namen.
   Zutaten aus dem Vorrat stehen separat unter „Vorrat prüfen“.
-- **Einkauf**: Einträge antippen zum Abhaken (werden nicht mitkopiert), unter jeder Zutat **Billa**/**Penny** wählen
-  (steht beim Kopieren in Klammern dahinter, sortiert nach Billa, Penny, Rest; wird je Zutat gemerkt),
+- **Einkauf**: Einträge antippen zum Abhaken (werden nicht mitkopiert), unter jeder Zutat **Billa**/**Penny**/**Sonstiges** wählen
+  (beim Kopieren gruppiert mit Überschriften Billa, Penny, Sonstiges, danach der Rest; wird je Zutat gemerkt),
   ✕ löscht einen Eintrag, 🏠 verschiebt eine
   Zutat dauerhaft in den Vorrat, mit „+“ eigene Einträge ergänzen (z. B. Klopapier).
   **Vorrat prüfen**: Gewürze und Grundzutaten, die man meist zu Hause hat, stehen separat –
