@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = '6';
+const APP_VERSION = '7';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -578,6 +578,7 @@ async function render() {
     case 'week': setTab('week'); return viewWeek(view);
     case 'list': setTab('list'); return viewList(view);
     case 'settings': setTab('settings'); return viewSettings(view);
+    case 'pantry': setTab('pantry'); return viewPantry(view);
     default: setTab('recipes'); return viewRecipes(view);
   }
 }
@@ -979,6 +980,91 @@ function viewList(view) {
   draw();
 }
 
+// Eintrag auf die Einkaufsliste setzen (legt bei Bedarf eine neue Liste an)
+function addToShoppingList(name) {
+  const l = getList() || { date: new Date().toLocaleDateString('de-DE'), buy: [], pantry: [] };
+  const k = itemKey(name);
+  const inPantry = l.pantry.find((it) => itemKey(it.name) === k);
+  const inBuy = l.buy.find((it) => itemKey(it.name) === k);
+  if (inPantry) inPantry.on = true;
+  else if (inBuy) inBuy.on = true;
+  else l.buy.push({ name, count: 1, on: true });
+  ls.set('shoppingList', l);
+}
+function isOnShoppingList(name) {
+  const l = getList();
+  if (!l) return false;
+  const k = itemKey(name);
+  return [...l.buy, ...l.pantry].some((it) => it.on && itemKey(it.name) === k);
+}
+
+function viewPantry(view) {
+  setHeader('Vorrat');
+  const draw = () => {
+    const pantry = getPantry();
+    view.innerHTML = `
+      <div class="section">
+        <h2>Vorrat hinzufügen</h2>
+        <p class="hint" style="margin-top:0">Was ihr meistens zu Hause habt. Mehrere auf einmal mit Komma trennen, z. B. „Thymian, Reis, Nudeln“.</p>
+        <form id="pantryForm" class="add-row" style="margin-top:0">
+          <input id="pantryInput" placeholder="z. B. Thymian" autocomplete="off" enterkeyhint="done">
+          <button class="icon-btn" type="submit" aria-label="Hinzufügen">+</button>
+        </form>
+      </div>
+      <div class="section">
+        <h2>Unser Vorrat (${pantry.length})</h2>
+        <p class="hint" style="margin-top:0">🛒 = ist leer → kommt auf die Einkaufsliste. ✕ = aus dem Vorrat entfernen.</p>
+        <input class="search" id="pantrySearch" type="search" placeholder="Im Vorrat suchen …" style="margin-bottom:6px">
+        <div id="pantryList">${pantry.map((n) => {
+          const on = isOnShoppingList(n);
+          return `
+          <div class="week-item" data-n="${esc(n)}">
+            <span class="name">${esc(n)}</span>
+            <button class="icon-btn" data-buy="1" aria-label="${esc(n)} ist leer" style="font-size:18px${on ? ';background:var(--accent);color:#fff' : ''}">${on ? '✓' : '🛒'}</button>
+            <button class="icon-btn" data-rm="1" aria-label="${esc(n)} entfernen" style="font-size:18px;color:var(--danger);background:transparent;border:1px solid var(--line)">✕</button>
+          </div>`;
+        }).join('') || '<p class="hint">Noch nichts im Vorrat.</p>'}</div>
+      </div>
+      <button class="btn secondary" id="pantryReset">Standard-Vorrat wiederherstellen</button>`;
+
+    $('#pantryForm').onsubmit = (e) => {
+      e.preventDefault();
+      const v = $('#pantryInput').value.trim();
+      if (!v) return;
+      const added = v.split(/,\s*/).map((x) => x.trim()).filter(Boolean);
+      setPantry([...getPantry(), ...added]);
+      toast(added.length === 1 ? `„${added[0]}“ hinzugefügt` : `${added.length} Einträge hinzugefügt`);
+      draw();
+      $('#pantryInput').focus();
+    };
+    $('#pantrySearch').oninput = (e) => {
+      const q = e.target.value.toLowerCase();
+      view.querySelectorAll('#pantryList .week-item').forEach((row) => { row.hidden = !row.dataset.n.toLowerCase().includes(q); });
+    };
+    $('#pantryList').onclick = (e) => {
+      const row = e.target.closest('[data-n]');
+      if (!row) return;
+      const n = row.dataset.n;
+      if (e.target.closest('[data-rm]')) {
+        if (!confirm(`„${n}“ aus dem Vorrat entfernen?`)) return;
+        setPantry(getPantry().filter((x) => x !== n));
+        toast(`„${n}“ entfernt`);
+        draw();
+      } else if (e.target.closest('[data-buy]')) {
+        if (isOnShoppingList(n)) { toast(`„${n}“ steht schon auf der Einkaufsliste`); return; }
+        addToShoppingList(n);
+        toast(`„${n}“ steht jetzt auf der Einkaufsliste`);
+        draw();
+      }
+    };
+    $('#pantryReset').onclick = () => {
+      if (!confirm('Vorrat auf die Standardliste zurücksetzen? Eigene Einträge gehen dabei verloren.')) return;
+      setPantry(DEFAULT_PANTRY); draw();
+    };
+  };
+  draw();
+}
+
 function viewSettings(view) {
   setHeader('Daten & Sicherung');
   view.innerHTML = `
@@ -987,16 +1073,6 @@ function viewSettings(view) {
       <p class="hint">Alle Rezepte sind nur auf diesem Gerät gespeichert. Erstelle ab und zu eine Sicherung – damit kannst du die Rezepte auch auf das andere Handy übertragen (Datei per AirDrop, Mail, Cloud o. Ä. schicken und dort importieren).</p>
       <button class="btn" id="exp">Sicherung exportieren</button>
       <div class="btn-row"><button class="btn secondary" id="imp">Sicherung importieren</button></div>
-    </div>
-    <div class="section">
-      <h2>Vorrat (haben wir immer)</h2>
-      <p class="hint" style="margin-top:0">Diese Zutaten stehen auf der Einkaufsliste nur unter „Vorrat prüfen“. Antippen zum Entfernen.</p>
-      <div class="chips" id="pantryEdit"></div>
-      <form id="pantryForm" class="add-row">
-        <input id="pantryInput" placeholder="Zum Vorrat hinzufügen, z. B. Thymian" autocomplete="off" enterkeyhint="done">
-        <button class="icon-btn" type="submit" aria-label="Hinzufügen">+</button>
-      </form>
-      <button class="btn secondary" id="pantryReset" style="margin-top:10px">Standard-Vorrat wiederherstellen</button>
     </div>
     <div class="section">
       <h2>Rezepte löschen</h2>
@@ -1030,28 +1106,6 @@ function viewSettings(view) {
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
   $('#imp').onclick = () => $('#backupInput').click();
-  const drawPantry = () => {
-    $('#pantryEdit').innerHTML = getPantry().map((n) => `<button class="chip" data-n="${esc(n)}">${esc(n)} ✕</button>`).join('') || '<p class="hint">Leer.</p>';
-  };
-  drawPantry();
-  $('#pantryEdit').onclick = (e) => {
-    const c = e.target.closest('[data-n]');
-    if (!c) return;
-    setPantry(getPantry().filter((n) => n !== c.dataset.n));
-    drawPantry();
-  };
-  $('#pantryForm').onsubmit = (e) => {
-    e.preventDefault();
-    const v = $('#pantryInput').value.trim();
-    if (!v) return;
-    setPantry([...getPantry(), ...v.split(/,\s*/)]);
-    $('#pantryInput').value = '';
-    drawPantry();
-  };
-  $('#pantryReset').onclick = () => {
-    if (!confirm('Vorrat auf die Standardliste zurücksetzen?')) return;
-    setPantry(DEFAULT_PANTRY); drawPantry();
-  };
   const drawDel = async () => {
     const all = await loadRecipes();
     $('#delList').innerHTML = all.length

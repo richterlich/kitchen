@@ -155,3 +155,5 @@ textarea.list {
 .chip { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 999px; padding: 8px 14px; font-size: 15px; }
 .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 @media (prefers-color-scheme: dark) { .chip.on { color: #0f1a14; } }
+
+[hidden] { display: none !important; }
