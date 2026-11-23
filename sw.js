@@ -1,10 +1,10 @@
 // Offline-Cache: App funktioniert nach dem ersten Öffnen ohne Internet.
 // Bei jeder Veröffentlichung erhöhen, damit Handys das Update sofort erkennen
-const CACHE = 'rezeptkartei-v0.2';
-// Nur das Nötigste vorab speichern. Große Teile (Texterkennung, PDF-Leser) werden erst bei der
-// ersten Benutzung geladen und dann offline gespeichert – und nur die Variante, die das Handy braucht.
+const CACHE = 'rezeptkartei-v0.3';
+// Nur das Nötigste vorab speichern. Der große PDF-Leser-Teil wird erst bei der
+// ersten Benutzung geladen und dann offline gespeichert.
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg',
-  'icon-180.png', 'icon-192.png', 'icon-512.png', 'lib/pdf.min.js', 'lib/tesseract/tesseract.min.js'];
+  'icon-180.png', 'icon-192.png', 'icon-512.png', 'lib/pdf.min.js'];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
 });

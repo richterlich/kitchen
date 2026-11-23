@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = 'v0.2';
+const APP_VERSION = 'v0.3';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -260,147 +260,25 @@ function loadImg(src) {
   return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Bild konnte nicht gelesen werden')); i.src = src; });
 }
 
-/* ---------- Texterkennung (OCR, läuft lokal auf dem Handy) ---------- */
-const OCR = {
-  worker: null,
-  onProgress: null,
-  async get() {
-    if (this.worker) return this.worker;
-    if (!window.Tesseract) throw new Error('Texterkennung nicht geladen');
-    const abs = (p) => new URL(p, location.href).href;
-    this.worker = await Tesseract.createWorker('deu', 1, {
-      workerPath: abs('lib/tesseract/worker.min.js'),
-      corePath: abs('lib/tesseract/core'),
-      langPath: abs('lib/tesseract/lang'),
-      workerBlobURL: false,
-      cacheMethod: 'none', // Sprachdaten nicht zusätzlich (unkomprimiert, ~4 MB) speichern – liegen schon im Offline-Cache
-      logger: (m) => this.onProgress && this.onProgress(m),
-    });
-    await this.worker.setParameters({ preserve_interword_spaces: '1' });
-    return this.worker;
-  },
-  // src: Bild, Canvas oder dataURL
-  lowConfidence: false,
-  async recognize(src, onProgress) {
-    this.onProgress = onProgress;
-    const w = await this.get();
-    const canvas = prepareForOcr(src);
-    const { data } = await w.recognize(canvas);
-    // Sehr unsichere Erkennung (typisch bei Handschrift) liefert nur Buchstabensalat -> verwerfen
-    if ((data.confidence ?? 100) < 55) { this.lowConfidence = true; return ''; }
-    try {
-      const t = layoutText(data, canvas.width);
-      if (t.trim()) return t;
-    } catch (e) { console.warn('Layout-Auswertung fehlgeschlagen', e); }
-    return data.text || '';
-  },
-};
-
-// Erkannten Text in Lesereihenfolge bringen – auch bei Karten mit zwei Spalten
-// (z. B. Zutaten links, Zubereitung rechts).
-function layoutText(data, W) {
-  const segs = [];
-  for (const line of data.lines || []) {
-    const ws = (line.words || []).filter((w) => {
-      const t = (w.text || '').trim();
-      if (!t) return false;
-      const alnum = t.replace(/[^A-Za-zÄÖÜäöüß0-9½¼¾]/g, '').length;
-      if (!alnum) return false; // reine Satzzeichen/Striche
-      return !(w.confidence < 55 && alnum < 3); // kurze, unsichere Krümel (Ränder, Schatten)
-    });
-    if (!ws.length) continue;
-    const h = Math.max(8, line.bbox.y1 - line.bbox.y0);
-    let cur = null;
-    for (const w of ws) {
-      // große Lücke in der Zeile = hier beginnt die nächste Spalte
-      if (cur && w.bbox.x0 - cur.x1 > h * 2.2) { segs.push(cur); cur = null; }
-      if (!cur) cur = { x0: w.bbox.x0, x1: w.bbox.x1, y: line.bbox.y0, text: w.text };
-      else { cur.x1 = w.bbox.x1; cur.text += ' ' + w.text; }
-    }
-    segs.push(cur);
-  }
-  const byY = (a, b) => a.y - b.y || a.x0 - b.x0;
-  // Spaltengrenze suchen: eine x-Position, die (fast) keine Zeile überquert
-  let best = null;
-  for (const c of segs) {
-    const g = c.x0 - 1;
-    if (g < W * 0.2 || g > W * 0.8) continue;
-    const left = segs.filter((t) => t.x1 <= g).length;
-    const right = segs.filter((t) => t.x0 >= g).length;
-    const span = segs.length - left - right;
-    if (left < 3 || right < 3) continue;
-    const min = Math.min(left, right);
-    if (!best || span < best.span || (span === best.span && min > best.min)) best = { g, span, min };
-  }
-  let ordered;
-  if (best && best.span <= segs.length * 0.2) {
-    const L = segs.filter((t) => t.x1 <= best.g).sort(byY);
-    const R = segs.filter((t) => t.x0 >= best.g).sort(byY);
-    const S = segs.filter((t) => t.x1 > best.g && t.x0 < best.g).sort(byY);
-    const top = Math.min(L[0].y, R[0].y);
-    ordered = [...S.filter((t) => t.y <= top), ...L, ...R, ...S.filter((t) => t.y > top)];
-  } else {
-    ordered = segs.sort(byY);
-  }
-  return ordered.map((t) => t.text.replace(/\s+/g, ' ').trim()).join('\n');
-}
-
-// Bild für die Texterkennung aufbereiten: passende Größe, Graustufen, Kontrast
-function prepareForOcr(src) {
-  const w0 = src.naturalWidth || src.width, h0 = src.naturalHeight || src.height;
-  const s = Math.min(2400 / w0, 1.8);
-  const c = document.createElement('canvas');
-  c.width = Math.round(w0 * s); c.height = Math.round(h0 * s);
-  const ctx = c.getContext('2d', { willReadFrequently: true });
-  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
-  ctx.drawImage(src, 0, 0, c.width, c.height);
-  const img = ctx.getImageData(0, 0, c.width, c.height);
-  const d = img.data;
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < d.length; i += 4) {
-    const g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
-    d[i] = g; hist[g]++;
-  }
-  // Kontrast strecken (1 % dunkelste / hellste Pixel abschneiden)
-  const total = d.length / 4;
-  let lo = 0, hi = 255, acc = 0;
-  for (; lo < 255 && (acc += hist[lo]) < total * 0.01; lo++);
-  acc = 0;
-  for (; hi > 0 && (acc += hist[hi]) < total * 0.01; hi--);
-  const range = Math.max(1, hi - lo);
-  for (let i = 0; i < d.length; i += 4) {
-    const v = Math.max(0, Math.min(255, ((d[i] - lo) * 255) / range));
-    d[i] = d[i + 1] = d[i + 2] = v;
-  }
-  ctx.putImageData(img, 0, 0);
-  return c;
-}
-
-function ocrProgressText(prefix, m) {
-  if (m.status === 'recognizing text') return `${prefix}Text wird erkannt … ${Math.round(m.progress * 100)} %`;
-  return `${prefix}Texterkennung wird vorbereitet …`;
-}
-
 async function readPdf(file, progress = () => {}) {
   if (!window.pdfjsLib) throw new Error('PDF-Bibliothek nicht geladen');
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   const pages = [];
   const texts = [];
-  let ocrUsed = false;
   for (let p = 1; p <= pdf.numPages; p++) {
     const pre = pdf.numPages > 1 ? `Seite ${p}/${pdf.numPages}: ` : '';
     progress(pre + 'Lese PDF …');
     const page = await pdf.getPage(p);
     const base = page.getViewport({ scale: 1 });
-    const vp = page.getViewport({ scale: Math.min(4, 2200 / base.width) });
+    const vp = page.getViewport({ scale: Math.min(4, (PAGE_MAX_W * 1.5) / base.width) });
     const c = document.createElement('canvas');
     c.width = Math.round(vp.width); c.height = Math.round(vp.height);
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     await page.render({ canvasContext: ctx, viewport: vp }).promise;
     pages.push(canvasToJpeg(scaledCanvas(c, c.width, c.height, PAGE_MAX_W)));
-    // 1. Versuch: eingebetteter Text der PDF
+    // Eingebetteter Text der PDF (nur bei digital erstellten PDFs, kein Scan)
     const tc = await page.getTextContent();
     const rows = [];
     for (const it of tc.items) {
@@ -411,16 +289,11 @@ async function readPdf(file, progress = () => {}) {
       row.parts.push({ x, s: it.str });
     }
     rows.sort((a, b) => b.y - a.y);
-    let pageText = rows.map((r) => r.parts.sort((a, b) => a.x - b.x).map((q) => q.s).join(' ').replace(/\s+/g, ' ').trim()).join('\n');
-    // 2. Kein Text (eingescannte Karte) → Texterkennung auf dem Bild
-    if (pageText.replace(/\s/g, '').length < 20) {
-      pageText = await OCR.recognize(c, (m) => progress(ocrProgressText(pre, m)));
-      ocrUsed = true;
-    }
+    const pageText = rows.map((r) => r.parts.sort((a, b) => a.x - b.x).map((q) => q.s).join(' ').replace(/\s+/g, ' ').trim()).join('\n');
     texts.push(pageText);
     c.width = c.height = 0; // Speicher freigeben (wichtig auf dem iPhone)
   }
-  return { pages, text: texts.join('\n'), ocrUsed };
+  return { pages, text: texts.join('\n') };
 }
 
 async function readImage(file, progress = () => {}) {
@@ -429,20 +302,8 @@ async function readImage(file, progress = () => {}) {
     progress('Lese Foto …');
     const img = await loadImg(url);
     const pages = [canvasToJpeg(scaledCanvas(img, img.naturalWidth, img.naturalHeight, PAGE_MAX_W))];
-    const text = await OCR.recognize(img, (m) => progress(ocrProgressText('', m)));
-    return { pages, text, ocrUsed: true };
+    return { pages, text: '' };
   } finally { URL.revokeObjectURL(url); }
-}
-
-// Texterkennung für bereits gespeicherte Seiten eines Rezepts
-async function ocrPages(pages, progress = () => {}) {
-  const texts = [];
-  for (let i = 0; i < pages.length; i++) {
-    const pre = pages.length > 1 ? `Seite ${i + 1}/${pages.length}: ` : '';
-    const img = await loadImg(pages[i]);
-    texts.push(await OCR.recognize(img, (m) => progress(ocrProgressText(pre, m))));
-  }
-  return texts.join('\n');
 }
 
 async function makeThumb(dataUrl) {
@@ -565,9 +426,7 @@ function applyGuess(rec, text, fallbackTitle) {
   rec.needsReview = true;
 }
 
-const HANDWRITING_HINT = 'Text konnte nicht gelesen werden (z. B. Handschrift) – bitte Zutaten und Zubereitung über ✎ eintragen.';
 async function importFiles(files) {
-  OCR.lowConfidence = false;
   const b = busy('Importiere …');
   const created = [];
   let n = 0;
@@ -580,6 +439,7 @@ async function importFiles(files) {
       const { pages, text } = isPdf ? await readPdf(f, progress) : await readImage(f, progress);
       const rec = { id: uid(), title: '', servings: 2, ingredients: [], steps: '', pages, created: Date.now() };
       applyGuess(rec, text, f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '));
+      rec.needsReview = !!text.trim(); // nur bei automatisch übernommenem PDF-Text prüfen lassen
       rec.thumb = pages[0] ? await makeThumb(pages[0]) : '';
       await DB.put(rec);
       created.push(rec);
@@ -589,7 +449,6 @@ async function importFiles(files) {
     }
   }
   b.done();
-  if (OCR.lowConfidence) toast(HANDWRITING_HINT, 6000);
   return created;
 }
 
@@ -738,7 +597,7 @@ async function viewRecipe(view, id) {
     view.innerHTML = `
       ${r.needsReview ? `<div class="section" style="border-color:#e8b77a">⚠️ Automatisch erkannt – bitte kurz prüfen und bei Bedarf über <b>✎</b> korrigieren.
         <div class="btn-row"><button class="btn secondary" id="okBtn">Ist korrekt</button></div></div>` : ''}
-      ${(r.pages || []).length && !(r.ingredients || []).length ? `<button class="btn" id="ocrBtn" style="margin-bottom:14px">🔍 Text aus Karte erkennen</button>` : ''}
+      ${!(r.ingredients || []).length ? `<button class="btn" id="fillBtn" style="margin-bottom:14px">✎ Zutaten &amp; Zubereitung eintragen</button>` : ''}
       <div class="two-col">
         <div class="section">
           <h2>Zutaten</h2>
@@ -772,20 +631,8 @@ async function viewRecipe(view, id) {
     };
     const ok = $('#okBtn');
     if (ok) ok.onclick = async () => { r.needsReview = false; await DB.put(r); draw(); };
-    const ocrBtn = $('#ocrBtn');
-    if (ocrBtn) ocrBtn.onclick = async () => {
-      OCR.lowConfidence = false;
-      const b = busy('Texterkennung wird vorbereitet …');
-      try {
-        const text = await ocrPages(r.pages, (m) => b.set(m));
-        applyGuess(r, text, r.title);
-        await DB.put(r);
-        setHeader(r.title, { back: true, action: { label: '✎', aria: 'Bearbeiten', onClick: () => go('#edit/' + id) } });
-        toast((r.ingredients || []).length ? 'Text erkannt – bitte prüfen' : HANDWRITING_HINT, 6000);
-      } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
-      stepsArr = (r.steps || '').split(/\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
-      draw();
-    };
+    const fillBtn = $('#fillBtn');
+    if (fillBtn) fillBtn.onclick = () => go('#edit/' + id);
   };
   const updPlan = () => { const p = getPlan(); if (p[id]) { p[id] = portions; setPlan(p); } };
   draw();
@@ -819,7 +666,6 @@ async function viewEdit(view, id) {
         <div class="section pages">
           <h2>Karteikarte (PDF / Foto)</h2>
           <div id="pages">${pagesHtml()}</div>
-          <button class="btn" id="ocrEdit" style="margin-bottom:10px" ${(r.pages || []).length ? '' : 'hidden'}>🔍 Text aus Karte erkennen</button>
           <button class="btn secondary" id="addPages">PDF / Foto anhängen</button>
         </div>
       </div>
@@ -833,24 +679,6 @@ async function viewEdit(view, id) {
     r.pages.splice(+b.dataset.del, 1);
     r.thumb = r.pages[0] ? await makeThumb(r.pages[0]) : '';
     $('#pages').innerHTML = pagesHtml();
-    $('#ocrEdit').hidden = !r.pages.length;
-  };
-  $('#ocrEdit').onclick = async () => {
-    if (!r.pages.length) return;
-    const filled = $('#fIng').value.trim() || $('#fSteps').value.trim();
-    if (filled && !confirm('Zutaten und Zubereitung durch den erkannten Text ersetzen?')) return;
-    const b = busy('Texterkennung wird vorbereitet …');
-    try {
-      const text = await ocrPages(r.pages, (m) => b.set(m));
-      if (!text.trim()) { toast(HANDWRITING_HINT, 6000); return; }
-      const g = guessFromText(text, $('#fTitle').value);
-      if (g.title && (!$('#fTitle').value.trim() || GENERIC_NAME.test($('#fTitle').value))) $('#fTitle').value = g.title;
-      if (g.servings) $('#fServ').value = g.servings;
-      $('#fIng').value = parseIngredients(g.ingredients).map(ingredientToLine).join('\n');
-      $('#fSteps').value = g.steps;
-      r.sourceText = text;
-      toast('Text erkannt – bitte prüfen und speichern', 3000);
-    } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
   };
   $('#addPages').onclick = () => {
     const inp = document.createElement('input');
@@ -874,8 +702,7 @@ async function viewEdit(view, id) {
         }
         if (!r.thumb && r.pages[0]) r.thumb = await makeThumb(r.pages[0]);
         $('#pages').innerHTML = pagesHtml();
-        $('#ocrEdit').hidden = !r.pages.length;
-      } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
+          } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
     };
     inp.click();
   };
@@ -1249,7 +1076,8 @@ async function init() {
     e.target.value = '';
     if (!files.length) return;
     const created = await importFiles(files);
-    if (created.length === 1) go('#recipe/' + created[0].id);
+    // Foto/Scan ohne Text: direkt zum Eintragen öffnen, das Kartenbild steht darunter
+    if (created.length === 1) go(((created[0].ingredients || []).length ? '#recipe/' : '#edit/') + created[0].id);
     else { toast(`${created.length} Rezepte importiert – bitte prüfen`, 3000); go('#recipes'); }
   };
   $('#backupInput').onchange = async (e) => {
@@ -1265,6 +1093,7 @@ async function init() {
     } catch (err) { toast('Import fehlgeschlagen: ' + err.message, 4000); }
   };
   window.addEventListener('hashchange', render);
+  try { indexedDB.deleteDatabase('keyval-store'); } catch { /* Reste der früheren Texterkennung entfernen */ }
   if (!ls.get('storageOptimized1', false)) {
     setTimeout(async () => {
       try {
@@ -1295,4 +1124,4 @@ async function init() {
 init();
 
 // Für Tests
-window.__rk = { parseIngredient, buildShoppingList, guessFromText, OCR };
+window.__rk = { parseIngredient, buildShoppingList, guessFromText };
