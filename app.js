@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = '10';
+const APP_VERSION = 'v0.1';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -561,7 +561,7 @@ function applyGuess(rec, text, fallbackTitle) {
   rec.needsReview = true;
 }
 
-const HANDWRITING_HINT = 'Text konnte nicht gelesen werden (z. B. Handschrift). Tipp: ✎ öffnen → „Text der Karte einfügen“.';
+const HANDWRITING_HINT = 'Text konnte nicht gelesen werden (z. B. Handschrift) – bitte Zutaten und Zubereitung über ✎ eintragen.';
 async function importFiles(files) {
   OCR.lowConfidence = false;
   const b = busy('Importiere …');
@@ -595,7 +595,6 @@ const setPlan = (p) => ls.set('plan', p);
 
 /* ---------- Routing / Ansichten ---------- */
 let recipesCache = [];
-let focusPaste = false;
 async function loadRecipes() {
   recipesCache = (await DB.all()).sort((a, b) => a.title.localeCompare(b.title, 'de'));
   return recipesCache;
@@ -707,10 +706,7 @@ async function viewRecipe(view, id) {
     view.innerHTML = `
       ${r.needsReview ? `<div class="section" style="border-color:#e8b77a">⚠️ Automatisch erkannt – bitte kurz prüfen und bei Bedarf über <b>✎</b> korrigieren.
         <div class="btn-row"><button class="btn secondary" id="okBtn">Ist korrekt</button></div></div>` : ''}
-      ${!(r.ingredients || []).length ? `<div class="btn-row" style="margin:0 0 14px">
-        <button class="btn" id="pasteBtn">📋 Text einfügen</button>
-        ${(r.pages || []).length ? '<button class="btn secondary" id="ocrBtn">🔍 Erkennen</button>' : ''}
-      </div>` : ''}
+      ${(r.pages || []).length && !(r.ingredients || []).length ? `<button class="btn" id="ocrBtn" style="margin-bottom:14px">🔍 Text aus Karte erkennen</button>` : ''}
       <div class="two-col">
         <div class="section">
           <h2>Zutaten</h2>
@@ -744,8 +740,6 @@ async function viewRecipe(view, id) {
     };
     const ok = $('#okBtn');
     if (ok) ok.onclick = async () => { r.needsReview = false; await DB.put(r); draw(); };
-    const pasteBtn = $('#pasteBtn');
-    if (pasteBtn) pasteBtn.onclick = () => { focusPaste = true; go('#edit/' + id); };
     const ocrBtn = $('#ocrBtn');
     if (ocrBtn) ocrBtn.onclick = async () => {
       OCR.lowConfidence = false;
@@ -789,18 +783,6 @@ async function viewEdit(view, id) {
         </div>
       </div>
       <div>
-        <div class="section" id="pasteSection">
-          <h2>📋 Text der Karte einfügen</h2>
-          <p class="hint" style="margin-top:0">Für handgeschriebene Karten: Das Handy liest die Handschrift selbst – den Text hier einfügen, die App teilt ihn in Zutaten und Zubereitung auf.</p>
-          <details class="hint" style="margin-bottom:10px"><summary><b>So geht’s</b></summary>
-            <p><b>iPhone:</b> Ins Feld unten tippen und halten → <b>„Text scannen“</b> → Kamera auf die Karte halten → „Einsetzen“.<br>
-            Oder: Foto in der <b>Fotos-App</b> öffnen → Live-Text-Symbol (unten rechts) → Text markieren → Kopieren → hier einfügen.</p>
-            <p><b>Samsung:</b> Foto in der <b>Galerie</b> öffnen → „T“-Symbol (Text extrahieren) bzw. Google Lens → Text kopieren → hier einfügen.</p>
-            <p>Die App erkennt Überschriften wie „Zutaten:“ und „Zubereitung:“, Zutaten mit Komma und Schritte mit Pfeil (→).</p>
-          </details>
-          <textarea class="list" id="fPaste" style="min-height:140px" placeholder="Zutaten: Lachsfilet, Erdäpfel, Magerquark&#10;Zubereitung: → Erdäpfel weich kochen …"></textarea>
-          <button class="btn" id="pasteApply" style="margin-top:10px">In Felder übernehmen</button>
-        </div>
         ${r.sourceText ? `<details class="section"><summary><b>Erkannter Text aus der PDF</b></summary><p class="hint">Zum Kopieren/Einfügen in die Felder.</p><textarea class="list" readonly style="min-height:200px">${esc(r.sourceText)}</textarea></details>` : ''}
         <div class="section pages">
           <h2>Karteikarte (PDF / Foto)</h2>
@@ -821,22 +803,6 @@ async function viewEdit(view, id) {
     $('#pages').innerHTML = pagesHtml();
     $('#ocrEdit').hidden = !r.pages.length;
   };
-  $('#pasteApply').onclick = () => {
-    const text = $('#fPaste').value.trim();
-    if (!text) { toast('Bitte zuerst Text einfügen'); $('#fPaste').focus(); return; }
-    const filled = $('#fIng').value.trim() || $('#fSteps').value.trim();
-    if (filled && !confirm('Zutaten und Zubereitung durch den eingefügten Text ersetzen?')) return;
-    const g = guessFromText(text, $('#fTitle').value);
-    if (g.title && (!$('#fTitle').value.trim() || GENERIC_NAME.test($('#fTitle').value))) $('#fTitle').value = g.title;
-    if (g.servings) $('#fServ').value = g.servings;
-    const all = parseIngredients(g.ingredients);
-    $('#fIng').value = all.filter((i) => !isInstructionText(i.name)).map(ingredientToLine).join('\n');
-    $('#fSteps').value = [g.steps, ...all.filter((i) => isInstructionText(i.name)).map(ingredientToLine)].filter(Boolean).join('\n');
-    r.sourceText = text;
-    $('#fTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
-    toast('Übernommen – bitte prüfen und speichern', 3000);
-  };
-  if (focusPaste) { focusPaste = false; setTimeout(() => $('#pasteSection').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }
   $('#ocrEdit').onclick = async () => {
     if (!r.pages.length) return;
     const filled = $('#fIng').value.trim() || $('#fSteps').value.trim();
@@ -1172,7 +1138,7 @@ function viewSettings(view) {
     </div>`;
   (async () => {
     const all = await DB.all();
-    let s = `App-Version ${APP_VERSION}. ${all.length} Rezepte gespeichert.`;
+    let s = `App-Version ${APP_VERSION} · ${all.length} Rezepte gespeichert.`;
     if (navigator.storage && navigator.storage.estimate) {
       const est = await navigator.storage.estimate();
       s += ` Belegt: ca. ${(est.usage / 1048576).toFixed(1)} MB.`;
