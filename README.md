@@ -29,6 +29,7 @@ Danach immer über das Symbol „Rezepte“ starten.
   dann über ✎ selbst eintragen.
 - Bereits gespeicherte Rezepte ohne Zutaten: Rezept öffnen → **🔍 Text aus Karte erkennen**.
 - **Woche**: Gerichte anhaken, Portionen wählen → **Bestätigen & Einkaufsliste erstellen**.
+  **📋 Gerichte kopieren** kopiert die ausgewählten Gerichte (z. B. zum Verschicken).
   Gleiche Zutaten werden zusammengerechnet (300 g + 200 g Huhn = 500 g Huhn) und auf die
   gewählten Portionen umgerechnet. Zutaten mit EL/TL/Prise erscheinen nur mit Namen.
   Zutaten aus dem Vorrat stehen separat unter „Vorrat prüfen“.

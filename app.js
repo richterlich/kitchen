@@ -883,7 +883,10 @@ async function viewWeek(view) {
           </div>`).join('')}
       </div>
       <button class="btn" id="confirm" ${count ? '' : 'disabled style="opacity:.5"'}>✓ Bestätigen &amp; Einkaufsliste erstellen (${count})</button>
-      <div class="btn-row"><button class="btn secondary" id="clear">Auswahl leeren</button></div>`;
+      <div class="btn-row">
+        <button class="btn secondary" id="copyWeek" ${count ? '' : 'disabled style="opacity:.5"'}>📋 Gerichte kopieren</button>
+        <button class="btn secondary" id="clear">Auswahl leeren</button>
+      </div>`;
   };
   draw();
   view.onclick = (e) => {
@@ -901,6 +904,13 @@ async function viewWeek(view) {
         if (plan[r.id]) delete plan[r.id]; else plan[r.id] = r.servings || 2;
       }
       setPlan(plan); draw();
+      return;
+    }
+    if (e.target.id === 'copyWeek') {
+      const sel = recipes.filter((r) => plan[r.id]);
+      if (!sel.length) return;
+      const text = 'Gerichte der Woche:\n' + sel.map((r) => `- ${r.title} (${plan[r.id]} Portionen)`).join('\n');
+      copyText(text).then((ok) => toast(ok ? `${sel.length} Gericht${sel.length > 1 ? 'e' : ''} kopiert` : 'Kopieren nicht möglich'));
       return;
     }
     if (e.target.id === 'clear') { for (const k of Object.keys(plan)) delete plan[k]; setPlan(plan); draw(); }
@@ -1135,7 +1145,8 @@ function viewSettings(view) {
     <div class="section">
       <h2>Speicher</h2>
       <p class="hint" id="storeInfo">…</p>
-    </div>`;
+    </div>
+    <p class="hint" style="text-align:center;margin:20px 0 8px">© ${new Date().getFullYear()} Manuel Richter</p>`;
   (async () => {
     const all = await DB.all();
     let s = `App-Version ${APP_VERSION} · ${all.length} Rezepte gespeichert.`;
