@@ -31,9 +31,10 @@ Danach immer über das Symbol „Rezepte“ starten.
   Samsung: Galerie → Foto → „T“ (Text extrahieren) bzw. Google Lens. Die App teilt den Text
   anhand von „Zutaten:“, „Zubereitung:“, Kommas und Pfeilen (→) auf.
 - Bereits gespeicherte Rezepte ohne Zutaten: Rezept öffnen → **🔍 Text aus Karte erkennen**.
-- **Woche**: Gerichte anhaken → **Bestätigen & Einkaufsliste erstellen**.
-  Die Liste enthält nur die Zutaten ohne Mengen (z. B. „Huhn“). Wird eine Zutat in mehreren
-  Rezepten gebraucht, steht davor, wie oft (z. B. „2x Zwiebel“).
+- **Woche**: Gerichte anhaken, Portionen wählen → **Bestätigen & Einkaufsliste erstellen**.
+  Gleiche Zutaten werden zusammengerechnet (300 g + 200 g Huhn = 500 g Huhn) und auf die
+  gewählten Portionen umgerechnet. Zutaten mit EL/TL/Prise erscheinen nur mit Namen.
+  Zutaten aus dem Vorrat stehen separat unter „Vorrat prüfen“.
 - **Einkauf**: Einträge antippen zum Abhaken (werden nicht mitkopiert), ✕ löscht einen Eintrag, 🏠 verschiebt eine
   Zutat dauerhaft in den Vorrat, mit „+“ eigene Einträge ergänzen (z. B. Klopapier).
   **Vorrat prüfen**: Gewürze und Grundzutaten, die man meist zu Hause hat, stehen separat –

@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = '9';
+const APP_VERSION = '10';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -184,37 +184,61 @@ function pantryMatch(name, pantry = getPantry()) {
   return null;
 }
 
+// Mengen auf eine Basiseinheit bringen, damit sie addiert werden können
+const BASE_UNIT = { g: ['g', 1], kg: ['g', 1000], mg: ['g', 0.001], ml: ['ml', 1], l: ['ml', 1000], dl: ['ml', 100], cl: ['ml', 10] };
+// Kleinstmengen: auf der Liste nur der Name ("Currypulver" statt "2 TL Currypulver")
+const NO_AMOUNT_UNITS = new Set(['EL', 'TL', 'Prise', 'Msp.']);
+const UNIT_PLURAL = { Zehe: 'Zehen', Dose: 'Dosen', Scheibe: 'Scheiben', Tasse: 'Tassen', Stange: 'Stangen', Knolle: 'Knollen',
+  Flasche: 'Flaschen', Zweig: 'Zweige', Kopf: 'Köpfe', Beutel: 'Beutel', Becher: 'Becher', Bund: 'Bund', Glas: 'Gläser' };
+
+function formatAmount(qty, unit) {
+  if (unit === 'g' && qty >= 1000) { qty /= 1000; unit = 'kg'; }
+  if (unit === 'ml' && qty >= 1000) { qty /= 1000; unit = 'l'; }
+  if (!['g', 'kg', 'ml', 'l'].includes(unit)) qty = Math.ceil(qty * 4 - 1e-9) / 4; // Stückzahlen auf Viertel aufrunden
+  if (qty > 1 && UNIT_PLURAL[unit]) unit = UNIT_PLURAL[unit];
+  return [fmtNum(qty), unit].filter(Boolean).join(' ');
+}
+
 function buildShoppingList(entries) {
   // entries: [{recipe, portions}]
   const map = new Map();
   const pantry = getPantry();
-  for (const { recipe } of entries) {
-    const seen = new Set(); // pro Rezept jede Zutat nur einmal zählen
+  for (const { recipe, portions } of entries) {
+    const factor = recipe.servings > 0 && portions > 0 ? portions / recipe.servings : 1;
     for (const ing of recipe.ingredients || []) {
       if (isInstructionText(ing.name)) continue; // Sätze der Anleitung gehören nicht auf die Einkaufsliste
-      for (const raw of shoppingNames(ing.name)) {
+      const names = shoppingNames(ing.name);
+      for (const raw of names) {
         const pm = pantryMatch(raw, pantry);
         const name = pm || raw; // "schwarzer Pfeffer" -> "Pfeffer"
-        const isP = !!pm;
-        // Singular/Plural zusammenführen (Zwiebel/Zwiebeln, Tomate/Tomaten)
-        const key = itemKey(name);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const cur = map.get(key) || { name, count: 0, isP };
-        if (name.length < cur.name.length) cur.name = name; // kürzeste Form ("Zwiebel")
-        cur.count++;
+        const key = itemKey(name); // Singular/Plural zusammenführen (Zwiebel/Zwiebeln)
+        const cur = map.get(key) || { names: [], isP: !!pm, sums: new Map() };
+        cur.names.push(name);
+        // Menge addieren (nur bei eindeutiger Zutat, nicht bei Sammelangaben wie "Salz, Pfeffer")
+        const unit = ing.unit || '';
+        if (ing.qty != null && names.length === 1 && !NO_AMOUNT_UNITS.has(unit)) {
+          const [bu, mult] = BASE_UNIT[unit] || [unit, 1];
+          cur.sums.set(bu, (cur.sums.get(bu) || 0) + ing.qty * mult * factor);
+        }
         map.set(key, cur);
       }
     }
   }
-  // Ergebnis: { buy: [...], pantry: [...] } – jeweils {name, count}
-  const all = [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  const all = [...map.values()].map((it) => {
+    const amounts = [...it.sums.entries()].filter(([, q]) => q > 0).map(([u, q]) => ({ text: formatAmount(q, u), q, u }));
+    // Name: bei Mengen > 1 ohne Einheit die Mehrzahl ("3 Zwiebeln"), sonst die kürzeste Form
+    const byLen = [...new Set(it.names)].sort((a, b) => a.length - b.length);
+    const plural = amounts.some((a) => a.u === '' && a.q > 1);
+    const name = plural ? byLen[byLen.length - 1] : byLen[0];
+    return { name, amount: it.isP ? '' : amounts.map((a) => a.text).join(' + '), isP: it.isP };
+  }).sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  // Ergebnis: { buy: [...], pantry: [...] }
   return {
-    buy: all.filter((it) => !it.isP).map(({ name, count }) => ({ name, count, on: true })),
-    pantry: all.filter((it) => it.isP).map(({ name, count }) => ({ name, count, on: false })),
+    buy: all.filter((it) => !it.isP).map(({ name, amount }) => ({ name, amount, on: true })),
+    pantry: all.filter((it) => it.isP).map(({ name }) => ({ name, amount: '', on: false })),
   };
 }
-const itemLabel = (it) => (it.count > 1 ? `${it.count}x ` : '') + it.name;
+const itemLabel = (it) => (it.amount ? it.amount + ' ' : (it.count > 1 ? `${it.count}x ` : '')) + it.name;
 
 /* ---------- PDF / Bild-Import ---------- */
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
