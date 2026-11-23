@@ -768,7 +768,7 @@ async function viewWeek(view) {
     if (e.target.id === 'copyWeek') {
       const sel = recipes.filter((r) => plan[r.id]);
       if (!sel.length) return;
-      const text = 'Gerichte der Woche:\n' + sel.map((r) => `- ${r.title} (${plan[r.id]} Portionen)`).join('\n');
+      const text = 'Gerichte der Woche:\n' + sel.map((r) => `- ${r.title}`).join('\n');
       copyText(text).then((ok) => toast(ok ? `${sel.length} Gericht${sel.length > 1 ? 'e' : ''} kopiert` : 'Kopieren nicht möglich'));
       return;
     }
