@@ -1,16 +1,12 @@
 // Offline-Cache: App funktioniert nach dem ersten Öffnen ohne Internet.
 // Bei jeder Veröffentlichung erhöhen, damit Handys das Update sofort erkennen
-const CACHE = 'rezeptkartei-v0.1-2';
+const CACHE = 'rezeptkartei-v0.2';
+// Nur das Nötigste vorab speichern. Große Teile (Texterkennung, PDF-Leser) werden erst bei der
+// ersten Benutzung geladen und dann offline gespeichert – und nur die Variante, die das Handy braucht.
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg',
-  'icon-180.png', 'icon-192.png', 'icon-512.png', 'lib/pdf.min.js', 'lib/pdf.worker.min.js',
-  'lib/tesseract/tesseract.min.js', 'lib/tesseract/worker.min.js', 'lib/tesseract/lang/deu.traineddata.gz'];
-// Texterkennungs-Kern (je nach Gerät eine der beiden Varianten) – im Hintergrund nachladen
-const LATER = ['lib/tesseract/core/tesseract-core-simd-lstm.wasm.js', 'lib/tesseract/core/tesseract-core-lstm.wasm.js'];
+  'icon-180.png', 'icon-192.png', 'icon-512.png', 'lib/pdf.min.js', 'lib/tesseract/tesseract.min.js'];
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => {
-    c.addAll(LATER).catch(() => {});
-    return c.addAll(FILES);
-  }).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))

@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = 'v0.1';
+const APP_VERSION = 'v0.2';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -243,7 +243,10 @@ const itemLabel = (it) => (it.amount ? it.amount + ' ' : (it.count > 1 ? `${it.c
 /* ---------- PDF / Bild-Import ---------- */
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
 
-function canvasToJpeg(canvas, q = 0.78) { return canvas.toDataURL('image/jpeg', q); }
+// Gespeicherte Kartenbilder: 1000 px Breite und JPEG-Qualität 0.6 reichen zum Lesen völlig aus
+const PAGE_MAX_W = 1000;
+const PAGE_QUALITY = 0.6;
+function canvasToJpeg(canvas, q = PAGE_QUALITY) { return canvas.toDataURL('image/jpeg', q); }
 function scaledCanvas(src, w, h, maxW) {
   const s = Math.min(1, maxW / w);
   const c = document.createElement('canvas');
@@ -270,6 +273,7 @@ const OCR = {
       corePath: abs('lib/tesseract/core'),
       langPath: abs('lib/tesseract/lang'),
       workerBlobURL: false,
+      cacheMethod: 'none', // Sprachdaten nicht zusätzlich (unkomprimiert, ~4 MB) speichern – liegen schon im Offline-Cache
       logger: (m) => this.onProgress && this.onProgress(m),
     });
     await this.worker.setParameters({ preserve_interword_spaces: '1' });
@@ -395,7 +399,7 @@ async function readPdf(file, progress = () => {}) {
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
     await page.render({ canvasContext: ctx, viewport: vp }).promise;
-    pages.push(canvasToJpeg(scaledCanvas(c, c.width, c.height, 1300)));
+    pages.push(canvasToJpeg(scaledCanvas(c, c.width, c.height, PAGE_MAX_W)));
     // 1. Versuch: eingebetteter Text der PDF
     const tc = await page.getTextContent();
     const rows = [];
@@ -424,7 +428,7 @@ async function readImage(file, progress = () => {}) {
   try {
     progress('Lese Foto …');
     const img = await loadImg(url);
-    const pages = [canvasToJpeg(scaledCanvas(img, img.naturalWidth, img.naturalHeight, 1300))];
+    const pages = [canvasToJpeg(scaledCanvas(img, img.naturalWidth, img.naturalHeight, PAGE_MAX_W))];
     const text = await OCR.recognize(img, (m) => progress(ocrProgressText('', m)));
     return { pages, text, ocrUsed: true };
   } finally { URL.revokeObjectURL(url); }
@@ -588,6 +592,34 @@ async function importFiles(files) {
   if (OCR.lowConfidence) toast(HANDWRITING_HINT, 6000);
   return created;
 }
+
+/* ---------- Speicher optimieren ---------- */
+const recipeBytes = (r) => JSON.stringify(r).length;
+// Bereits gespeicherte Kartenbilder verkleinern (nur wenn das Ergebnis wirklich kleiner ist)
+async function optimizeStorage(progress = () => {}) {
+  try { indexedDB.deleteDatabase('keyval-store'); } catch { /* Alter Tesseract-Cache */ }
+  const all = await DB.all();
+  let before = 0, after = 0, n = 0;
+  for (const r of all) {
+    n++;
+    progress(`Optimiere ${n}/${all.length} …`);
+    const b0 = recipeBytes(r);
+    before += b0;
+    let changed = false;
+    const pages = [];
+    for (const p of r.pages || []) {
+      try {
+        const img = await loadImg(p);
+        const out = canvasToJpeg(scaledCanvas(img, img.naturalWidth, img.naturalHeight, PAGE_MAX_W));
+        if (out.length < p.length * 0.9) { pages.push(out); changed = true; } else pages.push(p);
+      } catch { pages.push(p); }
+    }
+    if (changed) { r.pages = pages; await DB.put(r); }
+    after += recipeBytes(r);
+  }
+  return { before, after };
+}
+const fmtMB = (b) => (b / 1048576).toLocaleString('de-DE', { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + ' MB';
 
 /* ---------- Wochenplan & Einkaufsliste ---------- */
 const getPlan = () => ls.get('plan', {});
@@ -1145,18 +1177,35 @@ function viewSettings(view) {
     <div class="section">
       <h2>Speicher</h2>
       <p class="hint" id="storeInfo">…</p>
+      <button class="btn secondary" id="optimize" style="margin-top:6px">🗜 Speicher optimieren</button>
     </div>
     <p class="hint" style="text-align:center;margin:20px 0 8px">© ${new Date().getFullYear()} Manuel Richter</p>`;
   (async () => {
     const all = await DB.all();
-    let s = `App-Version ${APP_VERSION} · ${all.length} Rezepte gespeichert.`;
+    // Offline gespeicherte App-Dateien direkt messen
+    let appBytes = 0;
+    try {
+      for (const name of await caches.keys()) {
+        const c = await caches.open(name);
+        for (const req of await c.keys()) { const res = await c.match(req); if (res) appBytes += (await res.blob()).size; }
+      }
+    } catch { /* kein Cache (z. B. ohne https) */ }
+    let s = `App-Version ${APP_VERSION} · ${all.length} Rezepte.`;
     if (navigator.storage && navigator.storage.estimate) {
       const est = await navigator.storage.estimate();
-      s += ` Belegt: ca. ${(est.usage / 1048576).toFixed(1)} MB.`;
+      s += ` Belegt insgesamt ca. ${fmtMB(est.usage)}: Rezepte ca. ${fmtMB(Math.max(0, est.usage - appBytes))}, App-Dateien (offline) ${fmtMB(appBytes)}.`;
       if (navigator.storage.persisted) s += (await navigator.storage.persisted()) ? ' Dauerhafter Speicher aktiv.' : '';
     }
     $('#storeInfo').textContent = s;
   })();
+  $('#optimize').onclick = async () => {
+    const b = busy('Optimiere …');
+    try {
+      const { before, after } = await optimizeStorage((m) => b.set(m));
+      toast(`Rezepte: ${fmtMB(before)} → ${fmtMB(after)}`, 4000);
+    } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
+    render();
+  };
   $('#exp').onclick = async () => {
     const all = await DB.all();
     const json = JSON.stringify({ app: 'rezeptkartei', version: 1, exported: new Date().toISOString(), recipes: all });
@@ -1216,6 +1265,15 @@ async function init() {
     } catch (err) { toast('Import fehlgeschlagen: ' + err.message, 4000); }
   };
   window.addEventListener('hashchange', render);
+  if (!ls.get('storageOptimized1', false)) {
+    setTimeout(async () => {
+      try {
+        const { before, after } = await optimizeStorage();
+        ls.set('storageOptimized1', true);
+        if (before - after > 512 * 1024) toast(`Speicher optimiert: ${fmtMB(before - after)} gespart`, 4000);
+      } catch (e) { console.warn(e); }
+    }, 1500);
+  }
   render();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
     // Updates automatisch holen: beim Start und wenn die App wieder in den Vordergrund kommt
