@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = '8';
+const APP_VERSION = '9';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -156,13 +156,24 @@ function shoppingNames(name) {
     .filter((n) => /[A-Za-zÄÖÜäöüß]{2,}/.test(n));
 }
 /* ---------- Vorrat (Dinge, die man meistens zu Hause hat) ---------- */
-const DEFAULT_PANTRY = ['Salz', 'Pfeffer', 'Zucker', 'Mehl', 'Öl', 'Olivenöl', 'Sonnenblumenöl', 'Rapsöl', 'Essig',
+// Früher vorausgefüllte Standardliste – wird nur noch zum einmaligen Aufräumen gebraucht
+const OLD_DEFAULT_PANTRY = ['Salz', 'Pfeffer', 'Zucker', 'Mehl', 'Öl', 'Olivenöl', 'Sonnenblumenöl', 'Rapsöl', 'Essig',
   'Balsamico', 'Paprikapulver', 'Currypulver', 'Curry', 'Kreuzkümmel', 'Kurkuma', 'Zimt', 'Muskat', 'Muskatnuss',
   'Oregano', 'Majoran', 'Chilipulver', 'Chiliflocken', 'Cayennepfeffer', 'Lorbeerblatt', 'Knoblauchpulver',
   'Gemüsebrühe', 'Brühe', 'Backpulver', 'Natron', 'Vanillezucker', 'Puderzucker', 'Speisestärke', 'Senf',
   'Sojasauce', 'Honig'];
 const itemKey = (name) => String(name).toLowerCase().replace(/\s+/g, ' ').trim().replace(/(en|n|e|s)$/, '');
-const getPantry = () => ls.get('pantry', DEFAULT_PANTRY);
+const getPantry = () => ls.get('pantry', []); // standardmäßig leer
+// Einmalig: früher automatisch eingetragene Standard-Vorräte entfernen, eigene Einträge behalten
+(function migratePantry() {
+  if (ls.get('pantryMigrated', false)) return;
+  const stored = ls.get('pantry', null);
+  if (stored) {
+    const old = new Set(OLD_DEFAULT_PANTRY.map((n) => n.toLowerCase()));
+    ls.set('pantry', stored.filter((n) => !old.has(String(n).toLowerCase())));
+  }
+  ls.set('pantryMigrated', true);
+})();
 const setPantry = (list) => ls.set('pantry', [...new Map(list.map((n) => [itemKey(n), n.trim()])).values()].filter(Boolean).sort((a, b) => a.localeCompare(b, 'de')));
 // Gehört eine Zutat zum Vorrat? Auch "schwarzer Pfeffer" oder "Salz grob" passen zu "Pfeffer"/"Salz".
 // Liefert den passenden Vorrats-Namen oder null
@@ -1075,9 +1086,9 @@ function viewPantry(view) {
             <button class="icon-btn" data-buy="1" aria-label="${esc(n)} ist leer" style="font-size:18px${on ? ';background:var(--accent);color:#fff' : ''}">${on ? '✓' : '🛒'}</button>
             <button class="icon-btn" data-rm="1" aria-label="${esc(n)} entfernen" style="font-size:18px;color:var(--danger);background:transparent;border:1px solid var(--line)">✕</button>
           </div>`;
-        }).join('') || '<p class="hint">Noch nichts im Vorrat.</p>'}</div>
+        }).join('') || '<p class="hint">Noch nichts im Vorrat. Oben eintippen, was ihr immer zu Hause habt – oder in der Einkaufsliste bei einer Zutat auf 🏠 tippen.</p>'}</div>
       </div>
-      <button class="btn secondary" id="pantryReset">Standard-Vorrat wiederherstellen</button>`;
+      ${pantry.length ? '<button class="btn danger" id="pantryReset">Ganzen Vorrat leeren</button>' : ''}`;
 
     $('#pantryForm').onsubmit = (e) => {
       e.preventDefault();
@@ -1109,9 +1120,10 @@ function viewPantry(view) {
         draw();
       }
     };
-    $('#pantryReset').onclick = () => {
-      if (!confirm('Vorrat auf die Standardliste zurücksetzen? Eigene Einträge gehen dabei verloren.')) return;
-      setPantry(DEFAULT_PANTRY); draw();
+    const reset = $('#pantryReset');
+    if (reset) reset.onclick = () => {
+      if (!confirm('Den ganzen Vorrat leeren?')) return;
+      setPantry([]); draw();
     };
   };
   draw();

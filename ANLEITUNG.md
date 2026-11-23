@@ -39,7 +39,7 @@ Danach immer über das Symbol „Rezepte“ starten.
   **Vorrat prüfen**: Gewürze und Grundzutaten, die man meist zu Hause hat, stehen separat –
   nur antippen, wenn etwas leer ist, dann kommt es mit auf die Liste.
   Dann **Kopieren** oder **Senden**. **Abgehakte entfernen** räumt durchgestrichene Einträge weg, **Ganze Liste löschen** leert alles und setzt die Wochenauswahl zurück.
-- **Vorrat** (eigener Tab): eintippen, was ihr immer im Haus habt (mehrere mit Komma trennen),
+- **Vorrat** (eigener Tab, anfangs leer): eintippen, was ihr immer im Haus habt (mehrere mit Komma trennen),
   mit ✕ entfernen, mit 🛒 als „leer“ markieren → steht dann auf der Einkaufsliste.
 - **Daten**: Sicherung exportieren/importieren. Die beiden Handys synchronisieren sich
   **nicht** automatisch – Rezepte auf einem Handy erfassen, Sicherung exportieren, auf dem
