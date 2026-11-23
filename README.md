@@ -25,6 +25,11 @@ Danach immer über das Symbol „Rezepte“ starten.
   funktioniert offline) und trägt Titel, Portionen, Zutaten und Zubereitung ein – auch bei
   Karten mit zwei Spalten. Ergebnis kurz prüfen, bei Bedarf über ✎ korrigieren.
   Tipp für Fotos: Karte gerade, formatfüllend und ohne Schatten fotografieren.
+- **Handgeschriebene Karten** kann die eingebaute Texterkennung nicht lesen. Stattdessen die
+  Handschrift vom Handy lesen lassen und einfügen: Rezept öffnen → **📋 Text einfügen**.
+  iPhone: ins Einfügefeld tippen und halten → „Text scannen“ (oder Live Text in der Fotos-App).
+  Samsung: Galerie → Foto → „T“ (Text extrahieren) bzw. Google Lens. Die App teilt den Text
+  anhand von „Zutaten:“, „Zubereitung:“, Kommas und Pfeilen (→) auf.
 - Bereits gespeicherte Rezepte ohne Zutaten: Rezept öffnen → **🔍 Text aus Karte erkennen**.
 - **Woche**: Gerichte anhaken → **Bestätigen & Einkaufsliste erstellen**.
   Die Liste enthält nur die Zutaten ohne Mengen (z. B. „Huhn“). Wird eine Zutat in mehreren

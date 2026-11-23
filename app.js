@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = '7';
+const APP_VERSION = '8';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -241,11 +241,14 @@ const OCR = {
     return this.worker;
   },
   // src: Bild, Canvas oder dataURL
+  lowConfidence: false,
   async recognize(src, onProgress) {
     this.onProgress = onProgress;
     const w = await this.get();
     const canvas = prepareForOcr(src);
     const { data } = await w.recognize(canvas);
+    // Sehr unsichere Erkennung (typisch bei Handschrift) liefert nur Buchstabensalat -> verwerfen
+    if ((data.confidence ?? 100) < 55) { this.lowConfidence = true; return ''; }
     try {
       const t = layoutText(data, canvas.width);
       if (t.trim()) return t;
@@ -424,7 +427,7 @@ const GENERIC_NAME = /^(image|img|scan|dsc|pxl|photo|foto|bild|screenshot|dokume
 function cleanLine(l) {
   return l
     .replace(/[|¦_~]+/g, ' ')
-    .replace(/^[\s•·●▪■□◦○*»>\-–—]+/, '') // Aufzählungszeichen
+    .replace(/^[\s•·●▪■□◦○*»>\-–—→]+(?=\S)/, (m) => (m.trim() ? '→ ' : '')) // Aufzählungszeichen/Pfeile -> Markierung
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -457,8 +460,8 @@ function looksLikeSentence(l) {
 function mergeSteps(lines) {
   const out = [];
   for (const raw of lines) {
-    const startsNew = isStepNumber(raw);
-    const text = (startsNew ? raw.replace(/^\d{1,2}\s*[.)]\s*/, '') : raw).trim();
+    const startsNew = isStepNumber(raw) || /^→/.test(raw);
+    const text = (startsNew ? raw.replace(/^(\d{1,2}\s*[.)]|→)\s*/, '') : raw).trim();
     if (!text) continue;
     const prev = out[out.length - 1];
     if (!prev || startsNew || /[.!?:]$/.test(prev)) out.push(text);
@@ -470,6 +473,10 @@ function mergeSteps(lines) {
 
 function guessFromText(text, fallbackTitle) {
   const out = { title: '', servings: 0, ingredients: '', steps: '' };
+  text = String(text || '')
+    .replace(/\s*(?:-->|->|=>|⇒|➔|➜|→)\s*/g, '\n→ ') // Pfeile ("-> Erdäpfel kochen") = neuer Schritt
+    .replace(/\r/g, '');
+  const unmark = (l) => l.replace(/^→\s*/, '');
   const lines = text.split('\n').map(cleanLine).filter((l) => {
     if (!/[A-Za-zÄÖÜäöüß]{3,}|\d/.test(l)) return false;
     const chars = l.replace(/\s/g, '');
@@ -479,21 +486,27 @@ function guessFromText(text, fallbackTitle) {
   if (sv && +sv[1] > 0 && +sv[1] < 30) out.servings = +sv[1];
 
   // Titel: erste aussagekräftige Zeile vor den Zutaten
-  let titleIdx = lines.findIndex((l) => !ING_HEAD.test(l) && !STEP_HEAD.test(l) && !META.test(l) && /[A-Za-zÄÖÜäöüß]{3,}/.test(l) && !looksLikeSentence(l) && !/^\s*[\d½¼¾]/.test(l));
-  const firstHead = lines.findIndex((l) => ING_HEAD.test(l) || STEP_HEAD.test(l));
+  let titleIdx = lines.findIndex((l) => !/^→/.test(l) && !ING_HEAD.test(l) && !STEP_HEAD.test(l) && !META.test(l) && /[A-Za-zÄÖÜäöüß]{3,}/.test(l) && !looksLikeSentence(l) && !/^\s*[\d½¼¾]/.test(l));
+  const firstHead = lines.findIndex((l) => ING_HEAD.test(unmark(l)) || STEP_HEAD.test(unmark(l)));
   if (firstHead >= 0 && titleIdx > firstHead) titleIdx = -1;
   if (titleIdx >= 0) out.title = lines[titleIdx].replace(/[.:]+$/, '');
 
   const ing = [], steps = [];
   let section = null;
+  // Eine Zutaten-Zeile wie "Lachsfilet, Erdäpfel, Magerquark" in einzelne Zutaten aufteilen
+  const pushIng = (l) => l.split(/,\s*(?=[A-Za-zÄÖÜäöüß])/).map((x) => x.trim()).filter(Boolean).forEach((x) => ing.push(x));
   lines.forEach((l, i) => {
     if (i === titleIdx) return;
+    const marked = /^→/.test(l);
+    l = unmark(l);
     if (ING_HEAD.test(l)) { section = 'ing'; l = l.replace(ING_HEAD, '').replace(/^[^:]*:\s*/, '').trim(); if (!l) return; }
     else if (STEP_HEAD.test(l)) { section = 'step'; l = l.replace(STEP_HEAD, '').replace(/^\s*:\s*/, '').trim(); if (!l) return; }
     if (META.test(l) && words(l) <= 6 && !looksLikeSentence(l)) return;
-    if (section === 'step') steps.push(l);
-    else if (section === 'ing') (looksLikeSentence(l) ? steps : ing).push(l);
-    else (looksLikeIngredient(l) ? ing : steps).push(l);
+    const step = (marked ? '→ ' : '') + l;
+    if (section === 'step') steps.push(step);
+    else if (section === 'ing') { if (looksLikeSentence(l)) steps.push(step); else pushIng(l); }
+    else if (looksLikeIngredient(l) && !(marked && words(l) >= 3)) pushIng(l);
+    else steps.push(step);
   });
   out.ingredients = ing.map(fixOcrIngredient).join('\n');
   out.steps = mergeSteps(steps).join('\n');
@@ -513,7 +526,9 @@ function applyGuess(rec, text, fallbackTitle) {
   rec.needsReview = true;
 }
 
+const HANDWRITING_HINT = 'Text konnte nicht gelesen werden (z. B. Handschrift). Tipp: ✎ öffnen → „Text der Karte einfügen“.';
 async function importFiles(files) {
+  OCR.lowConfidence = false;
   const b = busy('Importiere …');
   const created = [];
   let n = 0;
@@ -535,6 +550,7 @@ async function importFiles(files) {
     }
   }
   b.done();
+  if (OCR.lowConfidence) toast(HANDWRITING_HINT, 6000);
   return created;
 }
 
@@ -544,6 +560,7 @@ const setPlan = (p) => ls.set('plan', p);
 
 /* ---------- Routing / Ansichten ---------- */
 let recipesCache = [];
+let focusPaste = false;
 async function loadRecipes() {
   recipesCache = (await DB.all()).sort((a, b) => a.title.localeCompare(b.title, 'de'));
   return recipesCache;
@@ -655,7 +672,10 @@ async function viewRecipe(view, id) {
     view.innerHTML = `
       ${r.needsReview ? `<div class="section" style="border-color:#e8b77a">⚠️ Automatisch erkannt – bitte kurz prüfen und bei Bedarf über <b>✎</b> korrigieren.
         <div class="btn-row"><button class="btn secondary" id="okBtn">Ist korrekt</button></div></div>` : ''}
-      ${(r.pages || []).length && !(r.ingredients || []).length ? `<button class="btn" id="ocrBtn" style="margin-bottom:14px">🔍 Text aus Karte erkennen</button>` : ''}
+      ${!(r.ingredients || []).length ? `<div class="btn-row" style="margin:0 0 14px">
+        <button class="btn" id="pasteBtn">📋 Text einfügen</button>
+        ${(r.pages || []).length ? '<button class="btn secondary" id="ocrBtn">🔍 Erkennen</button>' : ''}
+      </div>` : ''}
       <div class="two-col">
         <div class="section">
           <h2>Zutaten</h2>
@@ -689,15 +709,18 @@ async function viewRecipe(view, id) {
     };
     const ok = $('#okBtn');
     if (ok) ok.onclick = async () => { r.needsReview = false; await DB.put(r); draw(); };
+    const pasteBtn = $('#pasteBtn');
+    if (pasteBtn) pasteBtn.onclick = () => { focusPaste = true; go('#edit/' + id); };
     const ocrBtn = $('#ocrBtn');
     if (ocrBtn) ocrBtn.onclick = async () => {
+      OCR.lowConfidence = false;
       const b = busy('Texterkennung wird vorbereitet …');
       try {
         const text = await ocrPages(r.pages, (m) => b.set(m));
         applyGuess(r, text, r.title);
         await DB.put(r);
         setHeader(r.title, { back: true, action: { label: '✎', aria: 'Bearbeiten', onClick: () => go('#edit/' + id) } });
-        toast((r.ingredients || []).length ? 'Text erkannt – bitte prüfen' : 'Kaum Text erkannt – bitte über ✎ eintragen', 3000);
+        toast((r.ingredients || []).length ? 'Text erkannt – bitte prüfen' : HANDWRITING_HINT, 6000);
       } catch (e) { toast('Fehler: ' + e.message, 4000); } finally { b.done(); }
       stepsArr = (r.steps || '').split(/\n+/).map((s) => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
       draw();
@@ -731,6 +754,18 @@ async function viewEdit(view, id) {
         </div>
       </div>
       <div>
+        <div class="section" id="pasteSection">
+          <h2>📋 Text der Karte einfügen</h2>
+          <p class="hint" style="margin-top:0">Für handgeschriebene Karten: Das Handy liest die Handschrift selbst – den Text hier einfügen, die App teilt ihn in Zutaten und Zubereitung auf.</p>
+          <details class="hint" style="margin-bottom:10px"><summary><b>So geht’s</b></summary>
+            <p><b>iPhone:</b> Ins Feld unten tippen und halten → <b>„Text scannen“</b> → Kamera auf die Karte halten → „Einsetzen“.<br>
+            Oder: Foto in der <b>Fotos-App</b> öffnen → Live-Text-Symbol (unten rechts) → Text markieren → Kopieren → hier einfügen.</p>
+            <p><b>Samsung:</b> Foto in der <b>Galerie</b> öffnen → „T“-Symbol (Text extrahieren) bzw. Google Lens → Text kopieren → hier einfügen.</p>
+            <p>Die App erkennt Überschriften wie „Zutaten:“ und „Zubereitung:“, Zutaten mit Komma und Schritte mit Pfeil (→).</p>
+          </details>
+          <textarea class="list" id="fPaste" style="min-height:140px" placeholder="Zutaten: Lachsfilet, Erdäpfel, Magerquark&#10;Zubereitung: → Erdäpfel weich kochen …"></textarea>
+          <button class="btn" id="pasteApply" style="margin-top:10px">In Felder übernehmen</button>
+        </div>
         ${r.sourceText ? `<details class="section"><summary><b>Erkannter Text aus der PDF</b></summary><p class="hint">Zum Kopieren/Einfügen in die Felder.</p><textarea class="list" readonly style="min-height:200px">${esc(r.sourceText)}</textarea></details>` : ''}
         <div class="section pages">
           <h2>Karteikarte (PDF / Foto)</h2>
@@ -751,6 +786,22 @@ async function viewEdit(view, id) {
     $('#pages').innerHTML = pagesHtml();
     $('#ocrEdit').hidden = !r.pages.length;
   };
+  $('#pasteApply').onclick = () => {
+    const text = $('#fPaste').value.trim();
+    if (!text) { toast('Bitte zuerst Text einfügen'); $('#fPaste').focus(); return; }
+    const filled = $('#fIng').value.trim() || $('#fSteps').value.trim();
+    if (filled && !confirm('Zutaten und Zubereitung durch den eingefügten Text ersetzen?')) return;
+    const g = guessFromText(text, $('#fTitle').value);
+    if (g.title && (!$('#fTitle').value.trim() || GENERIC_NAME.test($('#fTitle').value))) $('#fTitle').value = g.title;
+    if (g.servings) $('#fServ').value = g.servings;
+    const all = parseIngredients(g.ingredients);
+    $('#fIng').value = all.filter((i) => !isInstructionText(i.name)).map(ingredientToLine).join('\n');
+    $('#fSteps').value = [g.steps, ...all.filter((i) => isInstructionText(i.name)).map(ingredientToLine)].filter(Boolean).join('\n');
+    r.sourceText = text;
+    $('#fTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    toast('Übernommen – bitte prüfen und speichern', 3000);
+  };
+  if (focusPaste) { focusPaste = false; setTimeout(() => $('#pasteSection').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); }
   $('#ocrEdit').onclick = async () => {
     if (!r.pages.length) return;
     const filled = $('#fIng').value.trim() || $('#fSteps').value.trim();
@@ -758,6 +809,7 @@ async function viewEdit(view, id) {
     const b = busy('Texterkennung wird vorbereitet …');
     try {
       const text = await ocrPages(r.pages, (m) => b.set(m));
+      if (!text.trim()) { toast(HANDWRITING_HINT, 6000); return; }
       const g = guessFromText(text, $('#fTitle').value);
       if (g.title && (!$('#fTitle').value.trim() || GENERIC_NAME.test($('#fTitle').value))) $('#fTitle').value = g.title;
       if (g.servings) $('#fServ').value = g.servings;
