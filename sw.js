@@ -1,6 +1,6 @@
 // Offline-Cache: App funktioniert nach dem ersten Öffnen ohne Internet.
 // Bei jeder Veröffentlichung erhöhen, damit Handys das Update sofort erkennen
-const CACHE = 'rezeptkartei-v0.1-5';
+const CACHE = 'rezeptkartei-v0.1.1';
 // Nur das Nötigste vorab speichern. Der große PDF-Leser-Teil wird erst bei der
 // ersten Benutzung geladen und dann offline gespeichert.
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg',

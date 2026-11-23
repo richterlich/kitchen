@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = 'v0.1';
+const APP_VERSION = 'v0.1.1';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -777,6 +777,7 @@ async function viewWeek(view) {
       const entries = recipes.filter((r) => plan[r.id]).map((r) => ({ recipe: r, portions: plan[r.id] }));
       if (!entries.length) return;
       const list = buildShoppingList(entries);
+      for (const it of [...list.buy, ...list.pantry]) it.store = storeFor(it.name);
       ls.set('shoppingList', { date: new Date().toLocaleDateString('de-DE'), ...list });
       go('#list');
     }
@@ -798,9 +799,24 @@ function getList() {
   if (typeof l === 'string' || !Array.isArray(l.buy)) return null; // Liste aus alter Version: bitte neu erstellen
   return l;
 }
+/* ---------- Geschäfte (Billa / Penny) ---------- */
+const STORES = ['Billa', 'Penny'];
+const getStorePrefs = () => ls.get('storePref', {});
+// Gemerktes Geschäft einer Zutat (wird bei der nächsten Liste automatisch gesetzt)
+const storeFor = (name) => getStorePrefs()[itemKey(name)] || '';
+function setStorePref(name, store) {
+  const p = getStorePrefs();
+  if (store) p[itemKey(name)] = store; else delete p[itemKey(name)];
+  ls.set('storePref', p);
+}
+const storeRank = (st) => (st ? STORES.indexOf(st) : STORES.length);
+
 function listToText(l) {
-  const items = [...l.buy, ...l.pantry].filter((it) => it.on).sort((a, b) => a.name.localeCompare(b.name, 'de'));
-  return `Einkaufsliste${l.date ? ` (${l.date})` : ''}\n\n` + items.map((it) => '- ' + itemLabel(it)).join('\n');
+  // Sortiert: erst Billa, dann Penny, dann ohne Geschäft – jeweils alphabetisch
+  const items = [...l.buy, ...l.pantry].filter((it) => it.on)
+    .sort((a, b) => storeRank(a.store) - storeRank(b.store) || a.name.localeCompare(b.name, 'de'));
+  return `Einkaufsliste${l.date ? ` (${l.date})` : ''}\n\n` +
+    items.map((it) => '- ' + itemLabel(it) + (it.store ? ` (${it.store})` : '')).join('\n');
 }
 
 function viewList(view) {
@@ -821,11 +837,14 @@ function viewList(view) {
       </div>
       <div class="section">
         <h2>Einkaufen</h2>
-        <p class="hint" style="margin-top:0">Antippen zum Abhaken (wird nicht mitkopiert). 🏠 = haben wir immer → in den Vorrat. ✕ = Eintrag löschen.</p>
+        <p class="hint" style="margin-top:0">Antippen zum Abhaken (wird nicht mitkopiert). Billa/Penny = wo kaufen (wird gemerkt). 🏠 = haben wir immer → in den Vorrat. ✕ = Eintrag löschen.</p>
         <div id="buy">${l.buy.map((it, i) => `
           <div class="week-item${it.on ? '' : ' off'}" data-i="${i}">
             <input type="checkbox" ${it.on ? 'checked' : ''} aria-label="${esc(it.name)} mitnehmen">
-            <span class="name">${esc(itemLabel(it))}</span>
+            <div class="buy-main">
+              <span class="name">${esc(itemLabel(it))}</span>
+              <div class="store-pick">${STORES.map((st) => `<button class="store-btn${it.store === st ? ' on' : ''}" data-store="${st}" data-si="${i}" aria-pressed="${it.store === st}">${st}</button>`).join('')}</div>
+            </div>
             <button class="icon-btn" data-home="${i}" aria-label="${esc(it.name)} in den Vorrat" style="font-size:18px">🏠</button>
             <button class="icon-btn" data-rm="${i}" aria-label="${esc(it.name)} löschen" style="font-size:18px;color:var(--danger);background:transparent;border:1px solid var(--line)">✕</button>
           </div>`).join('') || '<p class="hint">Alles im Vorrat.</p>'}</div>
@@ -844,6 +863,14 @@ function viewList(view) {
       <div class="btn-row"><button class="btn danger" id="clearList">🗑 Ganze Liste löschen</button></div>`;
 
     $('#buy').onclick = (e) => {
+      const sb = e.target.closest('[data-store]');
+      if (sb) {
+        const it = l.buy[+sb.dataset.si];
+        it.store = it.store === sb.dataset.store ? '' : sb.dataset.store; // nochmal tippen = abwählen
+        setStorePref(it.name, it.store);
+        save(); draw();
+        return;
+      }
       const rm = e.target.closest('[data-rm]');
       if (rm) {
         const it = l.buy.splice(+rm.dataset.rm, 1)[0];
@@ -877,7 +904,7 @@ function viewList(view) {
       e.preventDefault();
       const name = $('#addInput').value.trim();
       if (!name) return;
-      l.buy.push({ name, count: 1, on: true });
+      l.buy.push({ name, count: 1, on: true, store: storeFor(name) });
       save(); draw();
       $('#addInput').focus();
     };
@@ -910,7 +937,7 @@ function addToShoppingList(name) {
   const inBuy = l.buy.find((it) => itemKey(it.name) === k);
   if (inPantry) inPantry.on = true;
   else if (inBuy) inBuy.on = true;
-  else l.buy.push({ name, count: 1, on: true });
+  else l.buy.push({ name, count: 1, on: true, store: storeFor(name) });
   ls.set('shoppingList', l);
 }
 function isOnShoppingList(name) {
