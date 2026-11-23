@@ -1,5 +1,6 @@
 // Offline-Cache: App funktioniert nach dem ersten Öffnen ohne Internet.
-const CACHE = 'rezeptkartei-v7';
+// Bei jeder Veröffentlichung erhöhen, damit Handys das Update sofort erkennen
+const CACHE = 'rezeptkartei-v0.1-2';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg',
   'icon-180.png', 'icon-192.png', 'icon-512.png', 'lib/pdf.min.js', 'lib/pdf.worker.min.js',
   'lib/tesseract/tesseract.min.js', 'lib/tesseract/worker.min.js', 'lib/tesseract/lang/deu.traineddata.gz'];
@@ -21,7 +22,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
   const fromCache = () => caches.match(e.request, { ignoreSearch: true });
-  const fromNet = () => fetch(e.request).then((res) => {
+  // App-Dateien immer beim Server nachfragen (Browser-Zwischenspeicher umgehen)
+  const fromNet = () => fetch(e.request, { cache: url.pathname.includes('/lib/') ? 'default' : 'no-cache' }).then((res) => {
     if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
     return res;
   });
