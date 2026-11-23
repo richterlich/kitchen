@@ -1,6 +1,6 @@
 /* Rezeptkartei – läuft komplett lokal im Browser (IndexedDB), keine Server-Anbindung. */
 'use strict';
-const APP_VERSION = 'v0.1.1.1';
+const APP_VERSION = 'v0.1.1.2';
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -847,12 +847,10 @@ function viewList(view) {
         <div id="buy">${l.buy.map((it, i) => `
           <div class="week-item${it.on ? '' : ' off'}" data-i="${i}">
             <input type="checkbox" ${it.on ? 'checked' : ''} aria-label="${esc(it.name)} mitnehmen">
-            <div class="buy-main">
-              <span class="name">${esc(itemLabel(it))}</span>
-              <div class="store-pick">${STORES.map((st) => `<button class="store-btn${it.store === st ? ' on' : ''}" data-store="${st}" data-si="${i}" aria-pressed="${it.store === st}">${st}</button>`).join('')}</div>
-            </div>
-            <button class="icon-btn" data-home="${i}" aria-label="${esc(it.name)} in den Vorrat" style="font-size:18px">🏠</button>
-            <button class="icon-btn" data-rm="${i}" aria-label="${esc(it.name)} löschen" style="font-size:18px;color:var(--danger);background:transparent;border:1px solid var(--line)">✕</button>
+            <span class="name">${esc(itemLabel(it))}</span>
+            <button class="icon-btn" data-home="${i}" aria-label="${esc(it.name)} in den Vorrat">🏠</button>
+            <button class="icon-btn rm" data-rm="${i}" aria-label="${esc(it.name)} löschen">✕</button>
+            <div class="store-pick">${STORES.map((st) => `<button class="store-btn${it.store === st ? ' on' : ''}" data-store="${st}" data-si="${i}" aria-pressed="${it.store === st}">${st}</button>`).join('')}</div>
           </div>`).join('') || '<p class="hint">Alles im Vorrat.</p>'}</div>
         <form id="addForm" class="add-row">
           <input id="addInput" placeholder="Weitere Zutat hinzufügen …" autocomplete="off" enterkeyhint="done">

@@ -167,8 +167,10 @@ textarea.list {
 .store-btn.on[data-store="Penny"] { background: #cd1414; border-color: #cd1414; color: #fff; }
 .store-btn.on[data-store="Sonstiges"] { background: #7b2d8e; border-color: #7b2d8e; color: #fff; }
 .store-pick { flex-wrap: wrap; }
-/* kompakter, damit Billa/Penny/Sonstiges in eine Zeile passen */
-#buy .store-pick { flex-wrap: nowrap; gap: 5px; }
-#buy .store-btn { padding: 3px 9px; font-size: 12.5px; }
-#buy .icon-btn { min-width: 34px; width: 34px; height: 34px; padding: 0; font-size: 15px !important; }
-#buy .week-item { gap: 8px; }
+/* Einkaufszeile: [Haken] [Name] [🏠] [✕] – darunter die Geschäfte über die volle Breite */
+#buy .week-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: 8px; row-gap: 6px; align-items: center; }
+#buy .week-item .name { grid-column: 2; overflow-wrap: anywhere; }
+#buy .store-pick { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+#buy .store-btn { padding: 4px 11px; font-size: 13px; }
+#buy .icon-btn { min-width: 36px; width: 36px; height: 36px; padding: 0; font-size: 16px; }
+#buy .icon-btn.rm { color: var(--danger); background: transparent; border: 1px solid var(--line); }
